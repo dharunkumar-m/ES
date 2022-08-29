@@ -17,7 +17,7 @@ GIT_BRANCH="refactoring/add_lang"
 
 # Insert a new text after a given line
 # insertLinesAfter text_to_find text_to_add newLine_separator filename
-# insertLinesAfter "<\/project>" "   <modules>=   <\/modules>" "§" "pom.xml"
+# insertLinesAfter "<\/project>" "   <modules>=   <\/modules>" "Â§" "pom.xml"
 function insertLinesAfter() {
 	# echo "## modify $4 with $2"
 	sed "s/$1/$1$3$2/" $4 | tr "$3" "\n" > $4.new
@@ -26,7 +26,7 @@ function insertLinesAfter() {
 
 # Insert a new text before a given line
 # insertLinesBefore text_to_find text_to_add newLine_separator filename
-# insertLinesBefore "<\/project>" "   <modules>=   <\/modules>" "§" "pom.xml"
+# insertLinesBefore "<\/project>" "   <modules>=   <\/modules>" "Â§" "pom.xml"
 function insertLinesBefore() {
 	# echo "## modify $4 with $2"
 	sed "s/$1/$2$3$1/" $4 | tr "$3" "\n" > $4.new
@@ -93,7 +93,7 @@ function migratePlugin() {
 	git checkout $GIT_BRANCH
 	git merge -m "migrate branch for $1" migrate_$1 > /dev/null 2>/dev/null
 	# We can now add plugin module
-	insertLinesBefore "    <\/modules>" "        <module>$1<\/module>" "§" "plugins/pom.xml"
+	insertLinesBefore "    <\/modules>" "        <module>$1<\/module>" "Â§" "plugins/pom.xml"
 	git add .
 	git commit -m "add $1 module" > /dev/null
 	git branch -D migrate_$1

@@ -50,6 +50,8 @@ abstract class BulkRequestHandler {
 
     public abstract boolean awaitClose(long timeout, TimeUnit unit) throws InterruptedException;
 
+    public abstract void destroy();
+
 
     public static BulkRequestHandler syncHandler(BiConsumer<BulkRequest, ActionListener<BulkResponse>> consumer,
                                                  BackoffPolicy backoffPolicy, BulkProcessor.Listener listener,
@@ -105,6 +107,11 @@ abstract class BulkRequestHandler {
             // we are "closed" immediately as there is no request in flight
             return true;
         }
+
+        @Override
+        public void destroy() {
+
+        }
     }
 
     private static class AsyncBulkRequestHandler extends BulkRequestHandler {
@@ -112,6 +119,7 @@ abstract class BulkRequestHandler {
         private final BulkProcessor.Listener listener;
         private final Semaphore semaphore;
         private final int concurrentRequests;
+        private volatile boolean closed = false;
 
         private AsyncBulkRequestHandler(BiConsumer<BulkRequest, ActionListener<BulkResponse>> consumer, BackoffPolicy backoffPolicy,
                                         BulkProcessor.Listener listener, ThreadPool threadPool,
@@ -132,6 +140,9 @@ abstract class BulkRequestHandler {
                 listener.beforeBulk(executionId, bulkRequest);
                 semaphore.acquire();
                 acquired = true;
+                if(closed){
+                    throw new IllegalStateException("bulk request handler is closed");
+                }
                 Retry.on(EsRejectedExecutionException.class)
                     .policy(backoffPolicy)
                     .using(threadPool)
@@ -176,6 +187,12 @@ abstract class BulkRequestHandler {
                 return true;
             }
             return false;
+        }
+
+        //needs to be run under a lock
+        public void destroy(){
+            closed = true;
+            semaphore.release(this.concurrentRequests); // ensures no thread remain stuck.
         }
     }
 }

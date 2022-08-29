@@ -41,7 +41,7 @@ import java.util.Arrays;
 /**
  * This class starts elasticsearch.
  */
-class Elasticsearch extends EnvironmentAwareCommand {
+public class Elasticsearch extends EnvironmentAwareCommand {
 
     private final OptionSpecBuilder versionOption;
     private final OptionSpecBuilder daemonizeOption;
@@ -71,6 +71,10 @@ class Elasticsearch extends EnvironmentAwareCommand {
      * Main entry point for starting elasticsearch
      */
     public static void main(final String[] args) throws Exception {
+
+        /*
+        Note: Redundant security manager already present in Bootstrap.java:231
+
         // we want the JVM to think there is a security manager installed so that if internal policy decisions that would be based on the
         // presence of a security manager or lack thereof act as if there is a security manager present (e.g., DNS cache policy)
         System.setSecurityManager(new SecurityManager() {
@@ -79,6 +83,7 @@ class Elasticsearch extends EnvironmentAwareCommand {
                 // grant all permissions so that we can later set the security manager to the one that we want
             }
         });
+        */
         LogConfigurator.registerErrorListener();
         final Elasticsearch elasticsearch = new Elasticsearch();
         int status = main(args, elasticsearch, Terminal.DEFAULT);
@@ -146,7 +151,7 @@ class Elasticsearch extends EnvironmentAwareCommand {
      * NOTE: If this method is renamed and/or moved, make sure to
      * update elasticsearch-service.bat!
      */
-    static void close(String[] args) throws IOException {
+    public static void close(String[] args) throws IOException {
         Bootstrap.stop();
     }
 
