@@ -42,6 +42,10 @@ public class DiskThresholdSettings {
         new Setting<>("cluster.routing.allocation.disk.watermark.high", "90%",
             (s) -> validWatermarkSetting(s, "cluster.routing.allocation.disk.watermark.high"),
             Setting.Property.Dynamic, Setting.Property.NodeScope);
+    public static final Setting<String> CLUSTER_ROUTING_ALLOCATION_DISK_FLOOD_STAGE_WATERMARK_SETTING =
+        new Setting<>("cluster.routing.allocation.disk.watermark.floodstage", "95%",
+            (s) -> validWatermarkSetting(s, "cluster.routing.allocation.disk.watermark.floodstage"),
+            Setting.Property.Dynamic, Setting.Property.NodeScope);
     public static final Setting<Boolean> CLUSTER_ROUTING_ALLOCATION_INCLUDE_RELOCATIONS_SETTING =
         Setting.boolSetting("cluster.routing.allocation.disk.include_relocations", true,
             Setting.Property.Dynamic, Setting.Property.NodeScope);;
@@ -51,10 +55,13 @@ public class DiskThresholdSettings {
 
     private volatile String lowWatermarkRaw;
     private volatile String highWatermarkRaw;
+    private volatile String floodStageRaw;
     private volatile Double freeDiskThresholdLow;
     private volatile Double freeDiskThresholdHigh;
+    private volatile Double freeDiskThresholdFloodStage;
     private volatile ByteSizeValue freeBytesThresholdLow;
     private volatile ByteSizeValue freeBytesThresholdHigh;
+    private volatile ByteSizeValue freeBytesThresholdFloodStage;
     private volatile boolean includeRelocations;
     private volatile boolean enabled;
     private volatile TimeValue rerouteInterval;
@@ -62,13 +69,16 @@ public class DiskThresholdSettings {
     public DiskThresholdSettings(Settings settings, ClusterSettings clusterSettings) {
         final String lowWatermark = CLUSTER_ROUTING_ALLOCATION_LOW_DISK_WATERMARK_SETTING.get(settings);
         final String highWatermark = CLUSTER_ROUTING_ALLOCATION_HIGH_DISK_WATERMARK_SETTING.get(settings);
+        final String floodStage = CLUSTER_ROUTING_ALLOCATION_DISK_FLOOD_STAGE_WATERMARK_SETTING.get(settings);
         setHighWatermark(highWatermark);
         setLowWatermark(lowWatermark);
+        setFloodStageRaw(floodStage);
         this.includeRelocations = CLUSTER_ROUTING_ALLOCATION_INCLUDE_RELOCATIONS_SETTING.get(settings);
         this.rerouteInterval = CLUSTER_ROUTING_ALLOCATION_REROUTE_INTERVAL_SETTING.get(settings);
         this.enabled = CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING.get(settings);
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_LOW_DISK_WATERMARK_SETTING, this::setLowWatermark);
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_HIGH_DISK_WATERMARK_SETTING, this::setHighWatermark);
+        clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_DISK_FLOOD_STAGE_WATERMARK_SETTING, this::setFloodStageRaw);
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_INCLUDE_RELOCATIONS_SETTING, this::setIncludeRelocations);
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_REROUTE_INTERVAL_SETTING, this::setRerouteInterval);
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING, this::setEnabled);
@@ -99,7 +109,15 @@ public class DiskThresholdSettings {
         this.highWatermarkRaw = highWatermark;
         this.freeDiskThresholdHigh = 100.0 - thresholdPercentageFromWatermark(highWatermark);
         this.freeBytesThresholdHigh = thresholdBytesFromWatermark(highWatermark,
-            CLUSTER_ROUTING_ALLOCATION_LOW_DISK_WATERMARK_SETTING.getKey());
+            CLUSTER_ROUTING_ALLOCATION_HIGH_DISK_WATERMARK_SETTING.getKey());
+    }
+
+    private void setFloodStageRaw(String floodStageRaw) {
+        // Watermark is expressed in terms of used data, but we need "free" data watermark
+        this.floodStageRaw = floodStageRaw;
+        this.freeDiskThresholdFloodStage = 100.0 - thresholdPercentageFromWatermark(floodStageRaw);
+        this.freeBytesThresholdFloodStage = thresholdBytesFromWatermark(floodStageRaw,
+            CLUSTER_ROUTING_ALLOCATION_DISK_FLOOD_STAGE_WATERMARK_SETTING.getKey());
     }
 
     /**
@@ -116,6 +134,10 @@ public class DiskThresholdSettings {
         return highWatermarkRaw;
     }
 
+    public String getFloodStageRaw() {
+        return floodStageRaw;
+    }
+
     public Double getFreeDiskThresholdLow() {
         return freeDiskThresholdLow;
     }
@@ -124,12 +146,21 @@ public class DiskThresholdSettings {
         return freeDiskThresholdHigh;
     }
 
+    public Double getFreeDiskThresholdFloodStage() {
+        return freeDiskThresholdFloodStage;
+    }
+
     public ByteSizeValue getFreeBytesThresholdLow() {
         return freeBytesThresholdLow;
     }
 
     public ByteSizeValue getFreeBytesThresholdHigh() {
         return freeBytesThresholdHigh;
+    }
+
+
+    public ByteSizeValue getFreeBytesThresholdFloodStage() {
+        return freeBytesThresholdFloodStage;
     }
 
     public boolean includeRelocations() {

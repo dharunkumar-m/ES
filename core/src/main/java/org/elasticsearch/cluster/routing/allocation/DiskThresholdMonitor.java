@@ -20,6 +20,9 @@
 package org.elasticsearch.cluster.routing.allocation;
 
 import java.util.Set;
+import java.util.HashSet;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import com.carrotsearch.hppc.ObjectLookupContainer;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
@@ -34,6 +37,12 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.set.Sets;
+
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.ShardRouting;
 
 /**
  * Listens for a node to go over the high watermark and kicks off an empty
@@ -62,7 +71,10 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
      */
     private void warnAboutDiskIfNeeded(DiskUsage usage) {
         // Check absolute disk values
-        if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes()) {
+        if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes()) {
+            logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
+                diskThresholdSettings.getFreeBytesThresholdFloodStage(), usage);
+        } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes()) {
             logger.warn("high disk watermark [{}] exceeded on {}, shards will be relocated away from this node",
                 diskThresholdSettings.getFreeBytesThresholdHigh(), usage);
         } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdLow().getBytes()) {
@@ -71,7 +83,10 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
 
         // Check percentage disk values
-        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
+        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+            logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
+                Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdFloodStage(), "%"), usage);
+        } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
             logger.warn("high disk watermark [{}] exceeded on {}, shards will be relocated away from this node",
                 Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdHigh(), "%"), usage);
         } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdLow()) {
@@ -96,12 +111,32 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
                 }
             }
 
+            //ClusterState state = clusterStateSupplier.get();
+            ClusterState state = client.admin().cluster().prepareState().setLocal(true).get().getState();
+            Set<String> indicesToMarkReadOnly = new HashSet<>();
+            Set<String> indicesNotToAutoRelease = new HashSet<>();
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
                 warnAboutDiskIfNeeded(usage);
-                if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes() ||
+                RoutingNode routingNode = state.getRoutingNodes().node(node);
+                if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
+                    usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+                    if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
+                        for (ShardRouting routing : routingNode) {
+                            String indexName = routing.index().getName();
+                            indicesToMarkReadOnly.add(indexName);
+                            indicesNotToAutoRelease.add(indexName);
+                        }
+                    }
+                } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
+                    if (routingNode != null) {
+                        for (ShardRouting routing : routingNode) {
+                            String indexName = routing.index().getName();
+                            indicesNotToAutoRelease.add(indexName);
+                        }
+                    }
                     if ((System.nanoTime() - lastRunNS) > diskThresholdSettings.getRerouteInterval().nanos()) {
                         lastRunNS = System.nanoTime();
                         reroute = true;
@@ -139,6 +174,31 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
                 // Execute an empty reroute, but don't block on the response
                 client.admin().cluster().prepareReroute().execute();
             }
+
+            Set<String> indicesToAutoRelease = StreamSupport.stream(state.routingTable().indicesRouting()
+                    .spliterator(), false)
+                .map(c -> c.key)
+                .filter(index -> indicesNotToAutoRelease.contains(index) == false)
+                .filter(index -> state.getBlocks().hasIndexBlock(index, IndexMetaData.INDEX_READ_ONLY_ALLOW_DELETE_BLOCK))
+                .collect(Collectors.toSet());
+
+            if (!indicesToAutoRelease.isEmpty()) {
+                logger.info("releasing read-only-allow-delete block on indices: [{}]", indicesToAutoRelease);
+                updateIndicesReadOnly(indicesToAutoRelease, false);
+            }
+
+            indicesToMarkReadOnly.removeIf(index -> state.getBlocks().indexBlocked(ClusterBlockLevel.WRITE, index));
+            if (!indicesToMarkReadOnly.isEmpty()) {
+                updateIndicesReadOnly(indicesToMarkReadOnly,true);
+            }
         }
     }
+
+    private void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
+        Settings readOnlySettings = readOnly ?
+            Settings.builder().put(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE, Boolean.TRUE.toString()).build() :
+            Settings.builder().putNull(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE).build();
+        client.admin().indices().prepareUpdateSettings(indicesToUpdate.toArray(Strings.EMPTY_ARRAY)).setSettings(readOnlySettings).execute();
+    }
+
 }
