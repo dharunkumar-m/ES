@@ -14,7 +14,7 @@ GET /_search
 {
     "query": {
         "template": {
-            "inline": { "match": { "text": "{{query_string}}" }},
+            "source": { "match": { "text": "{{query_string}}" }},
             "params" : {
                 "query_string" : "all about search"
             }
@@ -48,7 +48,7 @@ GET /_search
 {
     "query": {
         "template": {
-            "inline": "{ \"match\": { \"text\": \"{{query_string}}\" }}", <1>
+            "source": "{ \"match\": { \"text\": \"{{query_string}}\" }}", <1>
             "params" : {
                 "query_string" : "all about search"
             }
@@ -98,6 +98,7 @@ PUT /_search/template/my_template
 }
 ------------------------------------------
 // CONSOLE
+// TEST[warning:The stored search template API is deprecated. Use stored scripts instead.]
 
 and refer to it in the `template` query with the `id` parameter:
 
@@ -108,7 +109,7 @@ GET /_search
 {
     "query": {
         "template": {
-            "stored": "my_template", <1>
+            "id": "my_template", <1>
             "params" : {
                 "query_string" : "all about search"
             }

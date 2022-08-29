@@ -23,6 +23,7 @@ import org.apache.lucene.index.memory.MemoryIndex;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
@@ -136,14 +137,11 @@ public class TemplateQueryBuilderTests extends AbstractQueryTestCase<TemplateQue
     public void testUnknownField() throws IOException {
         TemplateQueryBuilder testQuery = createTestQueryBuilder();
         XContentType xContentType = randomFrom(XContentType.JSON, XContentType.YAML);
-        String testQueryAsString = toXContent(testQuery, xContentType).string();
-        String queryAsString = testQueryAsString.replace("inline", "bogusField");
-        try {
-            parseQuery(createParser(xContentType.xContent(), queryAsString));
-            fail("IllegalArgumentException expected");
-        } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage(), containsString("[script] unknown field [bogusField], parser not found"));
-        }
+        String testQueryAsString = toShuffledXContent(testQuery, xContentType, ToXContent.EMPTY_PARAMS, randomBoolean()).utf8ToString();
+        String queryAsString = testQueryAsString.replace("source", "bogusField");
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
+                () -> parseQuery(createParser(xContentType.xContent(), queryAsString)));
+        assertThat(e.getMessage(), containsString("[script] unknown field [bogusField], parser not found"));
     }
 
     public void testJSONGeneration() throws IOException {
@@ -155,13 +153,13 @@ public class TemplateQueryBuilderTests extends AbstractQueryTestCase<TemplateQue
         builder.doXContent(content, null);
         content.endObject();
         content.close();
-        assertEquals("{\"template\":{\"inline\":\"I am a $template string\",\"lang\":\"mustache\",\"params\":{\"template\":\"filled\"}}}",
+        assertEquals("{\"template\":{\"source\":\"I am a $template string\",\"lang\":\"mustache\",\"params\":{\"template\":\"filled\"}}}",
                 content.string());
     }
 
     public void testRawEscapedTemplate() throws IOException {
         String expectedTemplateString = "{\"match_{{template}}\": {}}\"";
-        String query = "{\"template\": {\"inline\": \"{\\\"match_{{template}}\\\": {}}\\\"\",\"params\" : {\"template\" : \"all\"}}}";
+        String query = "{\"template\": {\"source\": \"{\\\"match_{{template}}\\\": {}}\\\"\",\"params\" : {\"template\" : \"all\"}}}";
         Map<String, Object> params = new HashMap<>();
         params.put("template", "all");
         QueryBuilder expectedBuilder = new TemplateQueryBuilder(expectedTemplateString, ScriptType.INLINE, params);
@@ -170,7 +168,7 @@ public class TemplateQueryBuilderTests extends AbstractQueryTestCase<TemplateQue
 
     public void testRawTemplate() throws IOException {
         String expectedTemplateString = "{\"match_{{template}}\":{}}";
-        String query = "{\"template\": {\"inline\": {\"match_{{template}}\": {}},\"params\" : {\"template\" : \"all\"}}}";
+        String query = "{\"template\": {\"source\": {\"match_{{template}}\": {}},\"params\" : {\"template\" : \"all\"}}}";
         Map<String, Object> params = new HashMap<>();
         params.put("template", "all");
         QueryBuilder expectedBuilder = new TemplateQueryBuilder(expectedTemplateString, ScriptType.INLINE, params, XContentType.JSON);

@@ -33,6 +33,7 @@ import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.ReferenceManager;
 import org.apache.lucene.search.SearcherFactory;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermQuery;
@@ -80,13 +81,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
-import java.util.function.LongConsumer;
 
 public class InternalEngine extends Engine {
     /**
@@ -177,8 +178,8 @@ public class InternalEngine extends Engine {
             assert pendingTranslogRecovery.get() == false : "translog recovery can't be pending before we set it";
             // don't allow commits until we are done with recovering
             pendingTranslogRecovery.set(openMode == EngineConfig.OpenMode.OPEN_INDEX_AND_TRANSLOG);
-            if (engineConfig.getRefreshListeners() != null) {
-                searcherManager.addListener(engineConfig.getRefreshListeners());
+            for (ReferenceManager.RefreshListener listener: engineConfig.getRefreshListeners()) {
+                searcherManager.addListener(listener);
             }
             success = true;
         } finally {
@@ -347,7 +348,7 @@ public class InternalEngine extends Engine {
     }
 
     @Override
-    public GetResult get(Get get, Function<String, Searcher> searcherFactory, LongConsumer onRefresh) throws EngineException {
+    public GetResult get(Get get, Function<String, Searcher> searcherFactory) throws EngineException {
         assert Objects.equals(get.uid().field(), uidField) : get.uid().field();
         try (ReleasableLock lock = readLock.acquire()) {
             ensureOpen();
@@ -361,9 +362,7 @@ public class InternalEngine extends Engine {
                         throw new VersionConflictEngineException(shardId, get.type(), get.id(),
                             get.versionType().explainConflictForReads(versionValue.getVersion(), get.version()));
                     }
-                    long time = System.nanoTime();
                     refresh("realtime_get");
-                    onRefresh.accept(System.nanoTime() - time);
                 }
             }
 
@@ -1322,7 +1321,7 @@ public class InternalEngine extends Engine {
      * is failed.
      */
     @Override
-    protected final void closeNoLock(String reason) {
+    protected final void closeNoLock(String reason, CountDownLatch closedLatch) {
         if (isClosed.compareAndSet(false, true)) {
             assert rwl.isWriteLockedByCurrentThread() || failEngineLock.isHeldByCurrentThread() : "Either the write lock must be held or the engine must be currently be failing itself";
             try {
@@ -1349,8 +1348,12 @@ public class InternalEngine extends Engine {
             } catch (Exception e) {
                 logger.warn("failed to rollback writer on close", e);
             } finally {
-                store.decRef();
-                logger.debug("engine closed [{}]", reason);
+                try {
+                    store.decRef();
+                    logger.debug("engine closed [{}]", reason);
+                } finally {
+                    closedLatch.countDown();
+                }
             }
         }
     }

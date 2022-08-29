@@ -19,6 +19,7 @@
 package org.elasticsearch.common.settings;
 
 import org.elasticsearch.action.admin.indices.close.TransportCloseIndexAction;
+import org.elasticsearch.script.ScriptModes;
 import org.elasticsearch.transport.RemoteClusterService;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.action.search.TransportSearchAction;
@@ -33,6 +34,7 @@ import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.InternalClusterInfoService;
 import org.elasticsearch.cluster.NodeConnectionsService;
 import org.elasticsearch.cluster.action.index.MappingUpdatedAction;
+import org.elasticsearch.cluster.metadata.IndexGraveyard;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.routing.allocation.DiskThresholdSettings;
 import org.elasticsearch.cluster.routing.allocation.allocator.BalancedShardsAllocator;
@@ -315,6 +317,8 @@ public final class ClusterSettings extends AbstractScopedSettings {
                     IndexSettings.QUERY_STRING_ANALYZE_WILDCARD,
                     IndexSettings.QUERY_STRING_ALLOW_LEADING_WILDCARD,
                     PrimaryShardAllocator.NODE_INITIAL_SHARDS_SETTING,
+                    ScriptModes.TYPES_ALLOWED_SETTING,
+                    ScriptModes.CONTEXTS_ALLOWED_SETTING,
                     ScriptService.SCRIPT_CACHE_SIZE_SETTING,
                     ScriptService.SCRIPT_CACHE_EXPIRE_SETTING,
                     ScriptService.SCRIPT_AUTO_RELOAD_ENABLED_SETTING,
@@ -428,6 +432,7 @@ public final class ClusterSettings extends AbstractScopedSettings {
                     ThreadPool.ESTIMATED_TIME_INTERVAL_SETTING,
                     FastVectorHighlighter.SETTING_TV_HIGHLIGHT_MULTI_VALUE,
                     Node.BREAKER_TYPE_KEY,
-                    IngestService.NEW_INGEST_DATE_FORMAT
+                    IngestService.NEW_INGEST_DATE_FORMAT,
+                    IndexGraveyard.SETTING_MAX_TOMBSTONES
             )));
 }

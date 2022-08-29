@@ -41,12 +41,14 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.common.xcontent.XContentParser.Token;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.SourceFieldMapper;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;
 import org.elasticsearch.search.lookup.SourceLookup;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
+import org.elasticsearch.transport.RemoteClusterAware;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -64,8 +66,8 @@ import static org.elasticsearch.common.lucene.Lucene.writeExplanation;
 import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constructorArg;
 import static org.elasticsearch.common.xcontent.ConstructingObjectParser.optionalConstructorArg;
 import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpectedToken;
+import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureFieldName;
 import static org.elasticsearch.common.xcontent.XContentParserUtils.parseStoredFieldsValue;
-import static org.elasticsearch.common.xcontent.XContentParserUtils.throwUnknownField;
 import static org.elasticsearch.search.fetch.subphase.highlight.HighlightField.readHighlightField;
 
 /**
@@ -103,6 +105,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
     private SearchShardTarget shard;
 
     private transient String index;
+    private transient String clusterAlias;
 
     private Map<String, Object> sourceAsMap;
     private byte[] sourceAsBytes;
@@ -252,7 +255,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
     }
 
     /**
-     * Returns bytes reference, also un compress the source if needed.
+     * Returns bytes reference, also uncompress the source if needed.
      */
     public BytesReference getSourceRef() {
         if (this.source == null) {
@@ -477,7 +480,15 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
         this.shard = target;
         if (target != null) {
             this.index = target.getIndex();
+            this.clusterAlias = target.getClusterAlias();
         }
+    }
+
+    /**
+     * Returns the cluster alias this hit comes from or null if it comes from a local cluster
+     */
+    public String getClusterAlias() {
+        return clusterAlias;
     }
 
     public void matchedQueries(String[] matchedQueries) {
@@ -565,7 +576,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
             nestedIdentity.toXContent(builder, params);
         } else {
             if (index != null) {
-                builder.field(Fields._INDEX, index);
+                builder.field(Fields._INDEX, RemoteClusterAware.buildRemoteIndexName(clusterAlias, index));
             }
             if (type != null) {
                 builder.field(Fields._TYPE, type);
@@ -641,7 +652,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
      * of the included search hit. The output of the map is used to create the
      * actual SearchHit instance via {@link #createFromMap(Map)}
      */
-    private static ObjectParser<Map<String, Object>, Void> MAP_PARSER = new ObjectParser<>("innerHitsParser", HashMap::new);
+    private static ObjectParser<Map<String, Object>, Void> MAP_PARSER = new ObjectParser<>("innerHitParser", true, HashMap::new);
 
     static {
         declareInnerHitsParseFields(MAP_PARSER);
@@ -773,7 +784,10 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
         Map<String, SearchHits> innerHits = new HashMap<>();
         while ((parser.nextToken()) != XContentParser.Token.END_OBJECT) {
             ensureExpectedToken(XContentParser.Token.FIELD_NAME, parser.currentToken(), parser::getTokenLocation);
-            innerHits.put(parser.currentName(), SearchHits.fromXContent(parser));
+            String name = parser.currentName();
+            ensureExpectedToken(Token.START_OBJECT, parser.nextToken(), parser::getTokenLocation);
+            ensureFieldName(parser, parser.nextToken(), SearchHits.Fields.HITS);
+            innerHits.put(name, SearchHits.fromXContent(parser));
             ensureExpectedToken(XContentParser.Token.END_OBJECT, parser.nextToken(), parser::getTokenLocation);
         }
         return innerHits;
@@ -808,7 +822,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
                     details.add(parseExplanation(parser));
                 }
             } else {
-                throwUnknownField(currentFieldName, parser.getTokenLocation());
+                parser.skipChildren();
             }
         }
         if (value == null) {
@@ -1039,8 +1053,7 @@ public class SearchHit implements Streamable, ToXContentObject, Iterable<SearchH
             return builder;
         }
 
-        private static final ConstructingObjectParser<NestedIdentity, Void> PARSER = new ConstructingObjectParser<>(
-                "nested_identity",
+        private static final ConstructingObjectParser<NestedIdentity, Void> PARSER = new ConstructingObjectParser<>("nested_identity", true,
                 ctorArgs -> new NestedIdentity((String) ctorArgs[0], (int) ctorArgs[1], (NestedIdentity) ctorArgs[2]));
         static {
             PARSER.declareString(constructorArg(), new ParseField(FIELD));

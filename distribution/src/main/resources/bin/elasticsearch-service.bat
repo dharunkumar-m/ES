@@ -167,9 +167,7 @@ if exist "%JAVA_HOME%\bin\client\jvm.dll" (
 )
 
 :foundJVM
-if "%ES_JVM_OPTIONS%" == "" (
-set ES_JVM_OPTIONS=%ES_HOME%\config\jvm.options
-)
+if "%ES_JVM_OPTIONS%" == "" set ES_JVM_OPTIONS=%ES_HOME%\config\jvm.options
 
 if not "%ES_JAVA_OPTS%" == "" set ES_JAVA_OPTS=%ES_JAVA_OPTS: =;%
 
@@ -234,15 +232,15 @@ for %%a in ("%ES_JAVA_OPTS:;=","%") do (
 @endlocal & set JVM_MS=%JVM_MS% & set JVM_MX=%JVM_MX% & set JVM_SS=%JVM_SS%
 
 if "%JVM_MS%" == "" (
-  echo minimum heap size not set; configure using -Xms via %ES_JVM_OPTIONS% or ES_JAVA_OPTS
+  echo minimum heap size not set; configure using -Xms via "%ES_JVM_OPTIONS%" or ES_JAVA_OPTS
   goto:eof
 )
 if "%JVM_MX%" == "" (
-  echo maximum heap size not set; configure using -Xmx via %ES_JVM_OPTIONS% or ES_JAVA_OPTS
+  echo maximum heap size not set; configure using -Xmx via "%ES_JVM_OPTIONS%" or ES_JAVA_OPTS
   goto:eof
 )
 if "%JVM_SS%" == "" (
-  echo thread stack size not set; configure using -Xss via %ES_JVM_OPTIONS% or ES_JAVA_OPTS
+  echo thread stack size not set; configure using -Xss via "%ES_JVM_OPTIONS%" or ES_JAVA_OPTS
   goto:eof
 )
 

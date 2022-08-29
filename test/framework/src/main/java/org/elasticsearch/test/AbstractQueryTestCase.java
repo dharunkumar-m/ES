@@ -40,6 +40,7 @@ import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
@@ -152,7 +153,6 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     private static ServiceHolder serviceHolder;
     private static int queryNameId = 0;
     private static Settings nodeSettings;
-    private static Settings indexSettings;
     private static Index index;
     private static String[] currentTypes;
     private static String[] randomTypes;
@@ -174,26 +174,25 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
 
     @BeforeClass
     public static void beforeClass() {
-        // we have to prefer CURRENT since with the range of versions we support it's rather unlikely to get the current actually.
-        Version indexVersionCreated = randomBoolean() ? Version.CURRENT
-                : VersionUtils.randomVersionBetween(random(), Version.V_2_0_0_beta1, Version.CURRENT);
         nodeSettings = Settings.builder()
                 .put("node.name", AbstractQueryTestCase.class.toString())
                 .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir())
                 .build();
-        indexSettings = Settings.builder()
-                .put(IndexMetaData.SETTING_VERSION_CREATED, indexVersionCreated).build();
 
         index = new Index(randomAlphaOfLengthBetween(1, 10), "_na_");
 
-        //create some random type with some default field, those types will stick around for all of the subclasses
-        currentTypes = new String[randomIntBetween(0, 5)];
-        for (int i = 0; i < currentTypes.length; i++) {
-            String type = randomAlphaOfLengthBetween(1, 10);
-            currentTypes[i] = type;
-        }
-        //set some random types to be queried as part the search request, before each test
+        // Set a single type in the index
+        currentTypes = new String[] { "doc" };
         randomTypes = getRandomTypes();
+    }
+
+    protected Settings indexSettings() {
+        // we have to prefer CURRENT since with the range of versions we support it's rather unlikely to get the current actually.
+        Version indexVersionCreated = randomBoolean() ? Version.CURRENT :
+            VersionUtils.randomVersionBetween(random(), Version.V_5_0_0, Version.CURRENT);
+        return Settings.builder()
+            .put(IndexMetaData.SETTING_VERSION_CREATED, indexVersionCreated)
+            .build();
     }
 
     @AfterClass
@@ -205,7 +204,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     @Before
     public void beforeTest() throws IOException {
         if (serviceHolder == null) {
-            serviceHolder = new ServiceHolder(nodeSettings, indexSettings, getPlugins(), this);
+            serviceHolder = new ServiceHolder(nodeSettings, indexSettings(), getPlugins(), this);
         }
         serviceHolder.clientInvocationHandler.delegate = this;
     }
@@ -227,7 +226,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     }
 
     @After
-    public void afterTest() throws IOException {
+    public void afterTest() {
         serviceHolder.clientInvocationHandler.delegate = null;
     }
 
@@ -266,9 +265,10 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     public void testFromXContent() throws IOException {
         for (int runs = 0; runs < NUMBER_OF_TESTQUERIES; runs++) {
             QB testQuery = createTestQueryBuilder();
-            XContentBuilder builder = toXContent(testQuery, randomFrom(XContentType.values()));
-            XContentBuilder shuffled = shuffleXContent(builder, shuffleProtectedFields());
-            assertParsedQuery(createParser(shuffled), testQuery);
+            XContentType xContentType = randomFrom(XContentType.values());
+            BytesReference shuffledXContent = toShuffledXContent(testQuery, xContentType, ToXContent.EMPTY_PARAMS, randomBoolean(),
+                    shuffleProtectedFields());
+            assertParsedQuery(createParser(xContentType.xContent(), shuffledXContent), testQuery);
             for (Map.Entry<String, QB> alternateVersion : getAlternateVersions().entrySet()) {
                 String queryAsString = alternateVersion.getKey();
                 assertParsedQuery(createParser(JsonXContent.jsonXContent, queryAsString), alternateVersion.getValue());
@@ -282,15 +282,6 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
      */
     protected String[] shuffleProtectedFields() {
         return Strings.EMPTY_ARRAY;
-    }
-
-    protected static XContentBuilder toXContent(QueryBuilder query, XContentType contentType) throws IOException {
-        XContentBuilder builder = XContentFactory.contentBuilder(contentType);
-        if (randomBoolean()) {
-            builder.prettyPrint();
-        }
-        query.toXContent(builder, ToXContent.EMPTY_PARAMS);
-        return builder;
     }
 
     /**
@@ -472,7 +463,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
      * Test that wraps the randomly generated query into an array as follows: { "query_name" : [{}]}
      * This causes unexpected situations in parser code that may not be handled properly.
      */
-    public final void testQueryWrappedInArray() throws IOException {
+    public final void testQueryWrappedInArray() {
         QB queryBuilder = createTestQueryBuilder();
         String queryName = queryBuilder.getName();
         String validQuery = queryBuilder.toString();
@@ -482,7 +473,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
         }
     }
 
-    private void queryWrappedInArrayTest(String queryName, String validQuery) throws IOException {
+    private void queryWrappedInArrayTest(String queryName, String validQuery) {
         int i = validQuery.indexOf("\"" + queryName + "\"");
         assertThat(i, greaterThan(0));
 
@@ -730,7 +721,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
         }
     }
 
-    public void testEqualsAndHashcode() throws IOException {
+    public void testEqualsAndHashcode() {
         for (int runs = 0; runs < NUMBER_OF_TESTQUERIES; runs++) {
             // TODO we only change name and boost, we should extend by any sub-test supplying a "mutate" method that randomly changes one
             // aspect of the object under test
@@ -855,10 +846,6 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
             }
         }
         return types;
-    }
-
-    protected static String getRandomType() {
-        return (currentTypes.length == 0) ? MetaData.ALL : randomFrom(currentTypes);
     }
 
     protected static Fuzziness randomFuzziness(String fieldName) {

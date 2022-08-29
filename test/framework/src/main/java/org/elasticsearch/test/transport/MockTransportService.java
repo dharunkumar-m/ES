@@ -19,6 +19,7 @@
 
 package org.elasticsearch.test.transport;
 
+import com.carrotsearch.randomizedtesting.SysGlobals;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -56,6 +57,7 @@ import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.transport.TransportServiceAdapter;
+import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.transport.local.LocalTransport;
 
 import java.io.IOException;
@@ -70,6 +72,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
@@ -88,6 +91,7 @@ import java.util.function.Function;
 public final class MockTransportService extends TransportService {
 
     private final Map<DiscoveryNode, List<Transport.Connection>> openConnections = new HashMap<>();
+    private static final int JVM_ORDINAL = Integer.parseInt(System.getProperty(SysGlobals.CHILDVM_SYSPROP_JVM_ID, "0"));
 
     public static class TestPlugin extends Plugin {
         @Override
@@ -109,7 +113,13 @@ public final class MockTransportService extends TransportService {
     }
 
     public static MockTransportService createNewService(Settings settings, Version version, ThreadPool threadPool,
-                                                        @Nullable ClusterSettings clusterSettings) {
+            @Nullable ClusterSettings clusterSettings) {
+        // some tests use MockTransportService to do network based testing. Yet, we run tests in multiple JVMs that means
+        // concurrent tests could claim port that another JVM just released and if that test tries to simulate a disconnect it might
+        // be smart enough to re-connect depending on what is tested. To reduce the risk, since this is very hard to debug we use
+        // a different default port range per JVM unless the incoming settings override it
+        int basePort = 10300 + (JVM_ORDINAL * 100); // use a non-default port otherwise some cluster in this JVM might reuse a port
+        settings = Settings.builder().put(TransportSettings.PORT.getKey(), basePort + "-" + (basePort+100)).put(settings).build();
         NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(ClusterModule.getNamedWriteables());
         final Transport transport = new MockTcpTransport(settings, threadPool, BigArrays.NON_RECYCLING_INSTANCE,
                 new NoneCircuitBreakerService(), namedWriteableRegistry, new NetworkService(settings, Collections.emptyList()), version);
@@ -124,38 +134,6 @@ public final class MockTransportService extends TransportService {
                 Node.NODE_ATTRIBUTES.get(settings).getAsMap(), DiscoveryNode.getRolesFromSettings(settings), version),
             clusterSettings);
     }
-
-    public static MockTransportService mockTcp(Settings settings, Version version, ThreadPool threadPool,
-                                             @Nullable ClusterSettings clusterSettings) {
-        NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(ClusterModule.getNamedWriteables());
-        Transport transport = new MockTcpTransport(settings, threadPool, BigArrays.NON_RECYCLING_INSTANCE,  new NoneCircuitBreakerService(),
-            namedWriteableRegistry, new NetworkService(settings, Collections.emptyList()), version);
-        if (version.equals(Version.CURRENT)) {
-            return new MockTransportService(settings, transport, threadPool, TransportService.NOOP_TRANSPORT_INTERCEPTOR, clusterSettings);
-        } else {
-            return new MockTransportService(settings, transport, threadPool, TransportService.NOOP_TRANSPORT_INTERCEPTOR, (boundAddress) ->
-                createLocal(settings, boundAddress.publishAddress(), settings.get(Node.NODE_NAME_SETTING.getKey(),
-                    UUIDs.randomBase64UUID()), version), clusterSettings);
-        }
-    }
-
-    /** Creates a DiscoveryNode representing the local node. */
-    private static DiscoveryNode createLocal(Settings settings, TransportAddress publishAddress, String nodeId, Version version) {
-        Map<String, String> attributes = new HashMap<>(Node.NODE_ATTRIBUTES.get(settings).getAsMap());
-        Set<DiscoveryNode.Role> roles = new HashSet<>();
-        if (Node.NODE_INGEST_SETTING.get(settings)) {
-            roles.add(DiscoveryNode.Role.INGEST);
-        }
-        if (Node.NODE_MASTER_SETTING.get(settings)) {
-            roles.add(DiscoveryNode.Role.MASTER);
-        }
-        if (Node.NODE_DATA_SETTING.get(settings)) {
-            roles.add(DiscoveryNode.Role.DATA);
-        }
-
-        return new DiscoveryNode(Node.NODE_NAME_SETTING.get(settings), nodeId, publishAddress, attributes, roles, version);
-    }
-
 
     private final Transport original;
 
@@ -200,6 +178,17 @@ public final class MockTransportService extends TransportService {
          } else {
             return super.createTaskManager();
         }
+    }
+
+    private volatile String executorName;
+
+    public void setExecutorName(final String executorName) {
+        this.executorName = executorName;
+    }
+
+    @Override
+    protected ExecutorService getExecutorService() {
+        return executorName == null ? super.getExecutorService() : getThreadPool().executor(executorName);
     }
 
     /**

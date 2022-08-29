@@ -46,6 +46,8 @@ public class SpanNearQueryBuilder extends AbstractQueryBuilder<SpanNearQueryBuil
 
     /** Default for flag controlling whether matches are required to be in-order */
     public static boolean DEFAULT_IN_ORDER = true;
+    /** Default slop value, this is the same that lucene {@link SpanNearQuery} uses if no slop is provided */
+    public static int DEFAULT_SLOP = 0;
 
     private static final ParseField SLOP_FIELD = new ParseField("slop");
     private static final ParseField COLLECT_PAYLOADS_FIELD = new ParseField("collect_payloads").withAllDeprecated("no longer supported");
@@ -149,8 +151,8 @@ public class SpanNearQueryBuilder extends AbstractQueryBuilder<SpanNearQueryBuil
         XContentParser parser = parseContext.parser();
 
         float boost = AbstractQueryBuilder.DEFAULT_BOOST;
-        Integer slop = null;
-        boolean inOrder = SpanNearQueryBuilder.DEFAULT_IN_ORDER;
+        int slop = DEFAULT_SLOP;
+        boolean inOrder = DEFAULT_IN_ORDER;
         String queryName = null;
 
         List<SpanQueryBuilder> clauses = new ArrayList<>();
@@ -195,10 +197,6 @@ public class SpanNearQueryBuilder extends AbstractQueryBuilder<SpanNearQueryBuil
             throw new ParsingException(parser.getTokenLocation(), "span_near must include [clauses]");
         }
 
-        if (slop == null) {
-            throw new ParsingException(parser.getTokenLocation(), "span_near must include [slop]");
-        }
-
         SpanNearQueryBuilder queryBuilder = new SpanNearQueryBuilder(clauses.get(0), slop);
         for (int i = 1; i < clauses.size(); i++) {
             queryBuilder.addClause(clauses.get(i));
@@ -211,6 +209,11 @@ public class SpanNearQueryBuilder extends AbstractQueryBuilder<SpanNearQueryBuil
 
     @Override
     protected Query doToQuery(QueryShardContext context) throws IOException {
+        if (clauses.size() == 1) {
+            Query query = clauses.get(0).toQuery(context);
+            assert query instanceof SpanQuery;
+            return query;
+        }
         SpanQuery[] spanQueries = new SpanQuery[clauses.size()];
         for (int i = 0; i < clauses.size(); i++) {
             Query query = clauses.get(i).toQuery(context);

@@ -78,6 +78,7 @@ PUT _cluster/settings
 }
 --------------------------------
 // CONSOLE
+// TEST[warning:[script.max_compilations_per_minute] setting was deprecated in Elasticsearch and will be removed in a future release! See the breaking changes documentation for the next major version.]
 
 A remote cluster can be deleted from the cluster settings by setting its seeds to `null`:
 
@@ -97,6 +98,7 @@ PUT _cluster/settings
 }
 --------------------------------
 // CONSOLE
+// TEST[warning:[script.max_compilations_per_minute] setting was deprecated in Elasticsearch and will be removed in a future release! See the breaking changes documentation for the next major version.]
 <1> `cluster_one` would be removed from the cluster settings, leaving `cluster_two` intact.
 
 
@@ -206,3 +208,11 @@ will be prefixed with their remote cluster name:
   to `false` (defaults to `true`) to prevent certain nodes from connecting to
   remote clusters. Cross-cluster search requests must be sent to a node that
   is allowed to act as a cross-cluster client.
+
+[float]
+[[retrieve-remote-clusters-info]]
+=== Retrieving remote clusters info
+
+The <<cluster-remote-info, Remote Cluster Info API>> allows to retrieve
+information about the configured remote clusters, as well as the remote
+nodes that the Cross Cluster Search node is connected to.

@@ -159,7 +159,7 @@ methods of the types in between. Type B is also considered to be a type A
 in both relationships.
 
 For the complete list of Painless reference types and their supported methods,
-see the {painless}/painless-api-reference.html[Painless API Reference].
+see the https://www.elastic.co/guide/en/elasticsearch/reference/current/painless-api-reference.html[Painless API Reference].
 
 For more information about working with reference types, see
 <<field-access, Accessing Fields>> and <<method-access, Calling Methods>>.
@@ -311,7 +311,7 @@ to floating point types.
 | int   | explicit | explicit | explicit |          | implicit | implicit | implicit
 | long  | explicit | explicit | explicit | explicit |          | implicit | implicit
 | float | explicit | explicit | explicit | explicit | explicit |          | implicit
-| double | explicit | explicit | explicit | explicit | explicit | explicit |
+| float | explicit | explicit | explicit | explicit | explicit | explicit |
 |====
 
 
@@ -376,7 +376,7 @@ cast would normally be required between the non-def types.
 def x;          // Declare def variable x and set it to null
 x = 3;          // Set the def variable x to the literal 3 with an implicit
                 //   cast from int to def
-double a = x;   // Declare double variable a and set it to def variable x,
+double a = x;   // Declare double variable y and set it to def variable x,
                 //   which contains a double
 int b = x;      // ERROR: Results in a run-time error because an explicit cast is
                 //   required to cast from a double to an int

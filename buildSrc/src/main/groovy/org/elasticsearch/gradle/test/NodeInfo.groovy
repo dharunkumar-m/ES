@@ -146,7 +146,7 @@ class NodeInfo {
              */
             esScript = "${-> binPath().resolve('elasticsearch.bat').toString()}"
         } else {
-            executable = 'sh'
+            executable = 'bash'
             wrapperScript = new File(cwd, "run")
             esScript = binPath().resolve('elasticsearch')
         }

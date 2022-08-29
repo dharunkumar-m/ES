@@ -23,7 +23,9 @@ Each index has one or more _mapping types_, which are used to divide the
 documents in an index into logical groups. User documents might be stored in a
 `user` type, and blog posts in a `blogpost` type.
 
-Each mapping type has:
+deprecated[6.0.0,See <<removal-of-types>>].
+
+A mapping type has:
 
 <<mapping-fields,Meta-fields>>::
 
@@ -68,6 +70,14 @@ via the <<multi-fields>> parameter.
 [float]
 === Settings to prevent mappings explosion
 
+Defining too many fields in an index is a condition that can lead to a
+mapping explosion, which can cause out of memory errors and difficult
+situations to recover from. This problem may be more common than expected.
+As an example, consider a situation in which every new document inserted
+introduces new fields. This is quite common with dynamic mappings.
+Every time a document contains new fields, those will end up in the index's
+mappings. This isn't worrying for a small amount of data, but it can become a
+problem as the mapping grows.
 The following settings allow you to limit the number of field mappings that
 can be created manually or dynamically, in order to prevent bad documents from
 causing a mapping explosion:
@@ -117,7 +127,7 @@ fields to an existing index with the <<indices-put-mapping,PUT mapping API>>.
 Other than where documented, *existing type and field mappings cannot be
 updated*. Changing the mapping would mean invalidating already indexed
 documents.  Instead, you should create a new index with the correct mappings
-and reindex your data into that index.
+and <<docs-reindex,reindex>> your data into that index.
 
 [[field-conflicts]]
 [float]
@@ -188,6 +198,8 @@ PUT my_index <1>
 
 
 --
+
+include::mapping/removal_of_types.asciidoc[]
 
 include::mapping/types.asciidoc[]
 

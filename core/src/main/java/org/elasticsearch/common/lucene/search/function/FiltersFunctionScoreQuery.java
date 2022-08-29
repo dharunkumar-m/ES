@@ -27,6 +27,7 @@ import org.apache.lucene.search.FilterScorer;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.ScorerSupplier;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Bits;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -184,8 +185,8 @@ public class FiltersFunctionScoreQuery extends Query {
             for (int i = 0; i < filterFunctions.length; i++) {
                 FilterFunction filterFunction = filterFunctions[i];
                 functions[i] = filterFunction.function.getLeafScoreFunction(context);
-                Scorer filterScorer = filterWeights[i].scorer(context);
-                docSets[i] = Lucene.asSequentialAccessBits(context.reader().maxDoc(), filterScorer);
+                ScorerSupplier filterScorerSupplier = filterWeights[i].scorerSupplier(context);
+                docSets[i] = Lucene.asSequentialAccessBits(context.reader().maxDoc(), filterScorerSupplier);
             }
             return new FiltersFunctionFactorScorer(this, subQueryScorer, scoreMode, filterFunctions, maxBoost, functions, docSets, combineFunction, needsScores);
         }
@@ -210,12 +211,12 @@ public class FiltersFunctionScoreQuery extends Query {
             List<Explanation> filterExplanations = new ArrayList<>();
             for (int i = 0; i < filterFunctions.length; ++i) {
                 Bits docSet = Lucene.asSequentialAccessBits(context.reader().maxDoc(),
-                        filterWeights[i].scorer(context));
+                        filterWeights[i].scorerSupplier(context));
                 if (docSet.get(doc)) {
                     FilterFunction filterFunction = filterFunctions[i];
                     Explanation functionExplanation = filterFunction.function.getLeafScoreFunction(context).explainScore(doc, expl);
                     double factor = functionExplanation.getValue();
-                    float sc = CombineFunction.toFloat(factor);
+                    float sc = (float) factor;
                     Explanation filterExplanation = Explanation.match(sc, "function score, product of:",
                             Explanation.match(1.0f, "match filter: " + filterFunction.filter.toString()), functionExplanation);
                     filterExplanations.add(filterExplanation);
@@ -228,7 +229,7 @@ public class FiltersFunctionScoreQuery extends Query {
             Explanation factorExplanation;
             if (filterExplanations.size() > 0) {
                 factorExplanation = Explanation.match(
-                        CombineFunction.toFloat(score),
+                        (float) score,
                         "function score, score mode [" + scoreMode.toString().toLowerCase(Locale.ROOT) + "]",
                         filterExplanations);
 

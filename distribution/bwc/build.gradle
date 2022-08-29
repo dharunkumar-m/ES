@@ -30,6 +30,9 @@ import org.elasticsearch.gradle.LoggedExec
 String bwcVersion = wireCompatVersions[-1]
 if (bwcVersion.endsWith('-SNAPSHOT')) {
   apply plugin: 'distribution'
+  // Not published so no need to assemble
+  tasks.remove(assemble)
+  build.dependsOn.remove('assemble')
 
   def (String major, String minor, String bugfix) = bwcVersion.split('\\.')
   def (String currentMajor, String currentMinor, String currentBugfix) = version.split('\\.')
@@ -110,6 +113,15 @@ if (bwcVersion.endsWith('-SNAPSHOT')) {
     dependsOn checkoutBwcBranch, writeBuildMetadata
     dir = checkoutDir
     tasks = [':distribution:deb:assemble', ':distribution:rpm:assemble', ':distribution:zip:assemble']
+    startParameter.systemPropertiesArgs = ['build.snapshot': 'true']
+    doLast {
+      List missing = [bwcDeb, bwcRpm, bwcZip].grep { file ->
+        false == file.exists() }
+      if (false == missing.empty) {
+        throw new InvalidUserDataException(
+          "Building bwc version didn't generate expected files ${missing}")
+      }
+    }
   }
 
 

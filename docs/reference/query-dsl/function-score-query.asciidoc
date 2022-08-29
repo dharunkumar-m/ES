@@ -143,7 +143,7 @@ GET /_search
             },
             "script_score" : {
                 "script" : {
-                  "inline": "Math.log(2 + doc['likes'].value)"
+                  "source": "Math.log(2 + doc['likes'].value)"
                 }
             }
         }
@@ -176,7 +176,7 @@ GET /_search
                         "a": 5,
                         "b": 1.2
                     },
-                    "inline": "params.a / Math.pow(params.b, doc['likes'].value)"
+                    "source": "params.a / Math.pow(params.b, doc['likes'].value)"
                 }
             }
         }
@@ -239,7 +239,7 @@ influence the score. It's similar to using the `script_score` function, however,
 it avoids the overhead of scripting. If used on a multi-valued field, only the
 first value of the field is used in calculations.
 
-As an example, imagine you have a document indexed with a numeric `popularity`
+As an example, imagine you have a document indexed with a numeric `likes`
 field and wish to influence the score of a document with this field, an example
 doing so would look like:
 

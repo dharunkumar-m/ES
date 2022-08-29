@@ -19,23 +19,13 @@
 
 import java.util.regex.Matcher
 import java.nio.file.Path
+import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.lib.RepositoryBuilder
 import org.gradle.plugins.ide.eclipse.model.SourceFolder
 import org.apache.tools.ant.taskdefs.condition.Os
 import org.elasticsearch.gradle.BuildPlugin
 import org.elasticsearch.gradle.VersionProperties
-
 import org.elasticsearch.gradle.Version
-
-import org.gradle.plugins.ide.eclipse.model.SourceFolder
-
-import org.gradle.api.tasks.wrapper.Wrapper
-import org.gradle.api.tasks.wrapper.Wrapper.DistributionType
-import org.gradle.util.GradleVersion
-import org.gradle.util.DistributionLocator
-
-import java.nio.file.Path
-import java.security.MessageDigest
-
 
 // common maven publishing configuration
 subprojects {
@@ -167,10 +157,28 @@ task verifyVersions {
   }
 }
 
+/*
+ * When adding backcompat behavior that spans major versions, temporarily
+ * disabling the backcompat tests is necessary. This flag controls
+ * the enabled state of every bwc task. It should be set back to true
+ * after the backport of the backcompat code is complete.
+ */
+allprojects {
+  ext.bwc_tests_enabled = true
+}
+
+task verifyBwcTestsEnabled {
+  doLast {
+    if (project.bwc_tests_enabled == false) {
+      throw new GradleException('Bwc tests are disabled. They must be re-enabled after completing backcompat behavior backporting.')
+    }
+  }
+}
+
 task branchConsistency {
   description 'Ensures this branch is internally consistent. For example, that versions constants match released versions.'
   group 'Verification'
-  dependsOn verifyVersions
+  dependsOn verifyVersions, verifyBwcTestsEnabled
 }
 
 subprojects {
@@ -203,8 +211,9 @@ subprojects {
     "org.elasticsearch.gradle:build-tools:${version}": ':build-tools',
     "org.elasticsearch:rest-api-spec:${version}": ':rest-api-spec',
     "org.elasticsearch:elasticsearch:${version}": ':core',
-    "org.elasticsearch.client:rest:${version}": ':client:rest',
-    "org.elasticsearch.client:sniffer:${version}": ':client:sniffer',
+    "org.elasticsearch.client:elasticsearch-rest-client:${version}": ':client:rest',
+    "org.elasticsearch.client:elasticsearch-rest-client-sniffer:${version}": ':client:sniffer',
+    "org.elasticsearch.client:elasticsearch-rest-high-level-client:${version}": ':client:rest-high-level',
     "org.elasticsearch.client:test:${version}": ':client:test',
     "org.elasticsearch.client:transport:${version}": ':client:transport',
     "org.elasticsearch.test:framework:${version}": ':test:framework',
@@ -393,23 +402,16 @@ task run(type: Run) {
   impliesSubProjects = true
 }
 
-task wrapper(type: Wrapper)
-
+/* Remove assemble on all qa projects because we don't need to publish
+ * artifacts for them. */
 gradle.projectsEvaluated {
-
-  allprojects {
-    tasks.withType(Wrapper) { Wrapper wrapper ->
-      wrapper.distributionType = DistributionType.ALL
-
-      wrapper.doLast {
-        final DistributionLocator locator = new DistributionLocator()
-        final GradleVersion version = GradleVersion.version(wrapper.gradleVersion)
-        final URI distributionUri = locator.getDistributionFor(version, wrapper.distributionType.name().toLowerCase(Locale.ENGLISH))
-        final URI sha256Uri = new URI(distributionUri.toString() + ".sha256")
-        final String sha256Sum = new String(sha256Uri.toURL().bytes)
-        wrapper.getPropertiesFile() << "distributionSha256Sum=${sha256Sum}\n"
+  subprojects {
+    if (project.path.startsWith(':qa')) {
+      Task assemble = project.tasks.findByName('assemble')
+      if (assemble) {
+        project.tasks.remove(assemble)
+        project.build.dependsOn.remove('assemble')
       }
     }
   }
-
 }

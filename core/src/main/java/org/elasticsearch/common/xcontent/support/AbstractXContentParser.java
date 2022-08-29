@@ -23,7 +23,9 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.logging.DeprecationLogger;
+import org.elasticsearch.common.logging.LogConfigurator;
 import org.elasticsearch.common.logging.Loggers;
+import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentParser;
 
@@ -54,7 +56,15 @@ public abstract class AbstractXContentParser implements XContentParser {
         }
     }
 
-    private static final DeprecationLogger deprecationLogger = new DeprecationLogger(Loggers.getLogger(AbstractXContentParser.class));
+    /**
+     * We have to lazy initialize the deprecation logger as otherwise a static logger here would be constructed before logging is configured
+     * leading to a runtime failure (see {@link LogConfigurator#checkErrorListener()} ). The premature construction would come from any
+     * {@link Setting} object constructed in, for example, {@link org.elasticsearch.env.Environment}.
+     */
+    private static class DeprecationLoggerHolder {
+        static DeprecationLogger deprecationLogger = new DeprecationLogger(Loggers.getLogger(AbstractXContentParser.class));
+    }
+
 
     private final NamedXContentRegistry xContentRegistry;
 
@@ -112,6 +122,7 @@ public abstract class AbstractXContentParser implements XContentParser {
             booleanValue = doBooleanValue();
         }
         if (interpretedAsLenient) {
+            final DeprecationLogger deprecationLogger = DeprecationLoggerHolder.deprecationLogger;
             deprecationLogger.deprecated("Expected a boolean [true/false] for property [{}] but got [{}]", currentName(), rawValue);
         }
         return booleanValue;
@@ -130,7 +141,7 @@ public abstract class AbstractXContentParser implements XContentParser {
         Token token = currentToken();
         if (token == Token.VALUE_STRING) {
             checkCoerceString(coerce, Short.class);
-            return Short.parseShort(text());
+            return (short) Double.parseDouble(text());
         }
         short result = doShortValue();
         ensureNumberConversion(coerce, result, Short.class);
@@ -144,13 +155,12 @@ public abstract class AbstractXContentParser implements XContentParser {
         return intValue(DEFAULT_NUMBER_COERCE_POLICY);
     }
 
-
     @Override
     public int intValue(boolean coerce) throws IOException {
         Token token = currentToken();
         if (token == Token.VALUE_STRING) {
             checkCoerceString(coerce, Integer.class);
-            return Integer.parseInt(text());
+            return (int) Double.parseDouble(text());
         }
         int result = doIntValue();
         ensureNumberConversion(coerce, result, Integer.class);
@@ -169,7 +179,13 @@ public abstract class AbstractXContentParser implements XContentParser {
         Token token = currentToken();
         if (token == Token.VALUE_STRING) {
             checkCoerceString(coerce, Long.class);
-            return Long.parseLong(text());
+            // longs need special handling so we don't lose precision while parsing
+            String stringValue = text();
+            try {
+                return Long.parseLong(stringValue);
+            } catch (NumberFormatException e) {
+                return (long) Double.parseDouble(stringValue);
+            }
         }
         long result = doLongValue();
         ensureNumberConversion(coerce, result, Long.class);

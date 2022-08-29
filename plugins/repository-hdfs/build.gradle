@@ -191,7 +191,8 @@ project.afterEvaluate {
       jvmArgs = baseJvmArgs
     }
 
-    project.integTestSecure.clusterConfig.jvmArgs = jvmArgs}
+    project.integTestSecure.clusterConfig.jvmArgs = jvmArgs
+  }
 
 RestIntegTestTask integTestSecure = project.tasks.create('integTestSecure', RestIntegTestTask.class) {
   description = "Runs rest tests against an elasticsearch cluster with HDFS secured by MIT Kerberos."
@@ -490,3 +491,7 @@ thirdPartyAudit.excludes = [
   'com.squareup.okhttp.Response',
   'com.squareup.okhttp.ResponseBody'
 ]
+
+if (JavaVersion.current() > JavaVersion.VERSION_1_8) {
+  thirdPartyAudit.excludes += ['javax.xml.bind.annotation.adapters.HexBinaryAdapter']
+}

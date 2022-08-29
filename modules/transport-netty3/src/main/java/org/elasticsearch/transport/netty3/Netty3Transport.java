@@ -22,6 +22,7 @@ package org.elasticsearch.transport.netty3;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -479,26 +480,37 @@ public class Netty3Transport extends TcpTransport<Channel> {
     }
 
     @Override
-    protected void sendMessage(Channel channel, BytesReference reference, Runnable sendListener) {
+    protected void sendMessage(Channel channel, BytesReference reference, ActionListener<Channel> listener) {
         final ChannelFuture future = channel.write(Netty3Utils.toChannelBuffer(reference));
-        future.addListener(future1 -> sendListener.run());
+        future.addListener(f -> {
+            if (f.isSuccess()) {
+                listener.onResponse(channel);
+            } else {
+                final Throwable cause = f.getCause();
+                Netty3Utils.maybeDie(cause);
+                logger.warn((Supplier<?>) () ->
+                    new ParameterizedMessage("write and flush on the network layer failed (channel: {})", channel), cause);
+                assert cause instanceof Exception;
+                listener.onFailure((Exception) cause);
+            }
+        });
     }
 
     @Override
-    protected void closeChannels(List<Channel> channels) {
-        List<ChannelFuture> futures = new ArrayList<>();
-
-        for (Channel channel : channels) {
-            try {
+    protected void closeChannels(List<Channel> channels, boolean blocking) throws IOException {
+        if (blocking) {
+            Netty3Utils.closeChannels(channels);
+        } else {
+            for (final Channel channel : channels) {
                 if (channel != null && channel.isOpen()) {
-                    futures.add(channel.close());
+                    final ChannelFuture closeFuture = channel.close();
+                    closeFuture.addListener(f -> {
+                        if (f.isSuccess() == false) {
+                            logger.warn("failed to close channel", f.getCause());
+                        }
+                    });
                 }
-            } catch (Exception e) {
-                logger.trace("failed to close channel", e);
             }
-        }
-        for (ChannelFuture future : futures) {
-            future.awaitUninterruptibly();
         }
     }
 

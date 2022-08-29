@@ -21,9 +21,11 @@ package org.elasticsearch.search.fetch.subphase;
 
 import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.util.ArrayUtil;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequestBuilder;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.BoolQueryBuilder;
@@ -60,9 +62,9 @@ import static org.elasticsearch.index.query.QueryBuilders.termQuery;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAllSuccessful;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertSearchHits;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertSearchHit;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertSearchHits;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.hasId;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -81,6 +83,13 @@ public class InnerHitsIT extends ESIntegTestCase {
         protected Map<String, Function<Map<String, Object>, Object>> pluginScripts() {
             return Collections.singletonMap("5", script -> "5");
         }
+    }
+
+    @Override
+    public Settings indexSettings() {
+        return Settings.builder()
+            .put(super.indexSettings())
+            .build();
     }
 
     public void testSimpleNested() throws Exception {
@@ -382,6 +391,9 @@ public class InnerHitsIT extends ESIntegTestCase {
 
     public void testInnerHitsWithObjectFieldThatHasANestedField() throws Exception {
         assertAcked(prepareCreate("articles")
+                        // number_of_shards = 1, because then we catch the expected exception in the same way.
+                        // (See expectThrows(...) below)
+                        .setSettings(Settings.builder().put("index.number_of_shards", 1))
                         .addMapping("article", jsonBuilder().startObject()
                                         .startObject("properties")
                                             .startObject("comments")
@@ -398,32 +410,54 @@ public class InnerHitsIT extends ESIntegTestCase {
         List<IndexRequestBuilder> requests = new ArrayList<>();
         requests.add(client().prepareIndex("articles", "article", "1").setSource(jsonBuilder().startObject()
                 .field("title", "quick brown fox")
-                .startObject("comments")
-                .startArray("messages")
-                    .startObject().field("message", "fox eat quick").endObject()
-                    .startObject().field("message", "bear eat quick").endObject()
+                .startArray("comments")
+                    .startObject()
+                        .startArray("messages")
+                            .startObject().field("message", "fox eat quick").endObject()
+                            .startObject().field("message", "bear eat quick").endObject()
+                        .endArray()
+                    .endObject()
+                    .startObject()
+                        .startArray("messages")
+                            .startObject().field("message", "no fox").endObject()
+                        .endArray()
+                    .endObject()
                 .endArray()
-                .endObject()
                 .endObject()));
         indexRandom(true, requests);
 
+        Exception e = expectThrows(Exception.class, () -> client().prepareSearch("articles").setQuery(nestedQuery("comments.messages",
+            matchQuery("comments.messages.message", "fox"), ScoreMode.Avg).innerHit(new InnerHitBuilder())).get());
+        assertEquals("Cannot execute inner hits. One or more parent object fields of nested field [comments.messages] are " +
+            "not nested. All parent fields need to be nested fields too", e.getCause().getCause().getMessage());
+
+        e = expectThrows(Exception.class, () -> client().prepareSearch("articles").setQuery(nestedQuery("comments.messages",
+            matchQuery("comments.messages.message", "fox"), ScoreMode.Avg).innerHit(new InnerHitBuilder()
+            .setFetchSourceContext(new FetchSourceContext(true)))).get());
+        assertEquals("Cannot execute inner hits. One or more parent object fields of nested field [comments.messages] are " +
+            "not nested. All parent fields need to be nested fields too", e.getCause().getCause().getMessage());
+
         SearchResponse response = client().prepareSearch("articles")
                 .setQuery(nestedQuery("comments.messages", matchQuery("comments.messages.message", "fox"), ScoreMode.Avg)
-                        .innerHit(new InnerHitBuilder())).get();
+                        .innerHit(new InnerHitBuilder().setFetchSourceContext(new FetchSourceContext(false)))).get();
         assertNoFailures(response);
         assertHitCount(response, 1);
         SearchHit hit = response.getHits().getAt(0);
         assertThat(hit.id(), equalTo("1"));
         SearchHits messages = hit.getInnerHits().get("comments.messages");
-        assertThat(messages.getTotalHits(), equalTo(1L));
+        assertThat(messages.getTotalHits(), equalTo(2L));
         assertThat(messages.getAt(0).id(), equalTo("1"));
         assertThat(messages.getAt(0).getNestedIdentity().getField().string(), equalTo("comments.messages"));
-        assertThat(messages.getAt(0).getNestedIdentity().getOffset(), equalTo(0));
+        assertThat(messages.getAt(0).getNestedIdentity().getOffset(), equalTo(2));
         assertThat(messages.getAt(0).getNestedIdentity().getChild(), nullValue());
+        assertThat(messages.getAt(1).getId(), equalTo("1"));
+        assertThat(messages.getAt(1).getNestedIdentity().getField().string(), equalTo("comments.messages"));
+        assertThat(messages.getAt(1).getNestedIdentity().getOffset(), equalTo(0));
+        assertThat(messages.getAt(1).getNestedIdentity().getChild(), nullValue());
 
         response = client().prepareSearch("articles")
                 .setQuery(nestedQuery("comments.messages", matchQuery("comments.messages.message", "bear"), ScoreMode.Avg)
-                        .innerHit(new InnerHitBuilder())).get();
+                        .innerHit(new InnerHitBuilder().setFetchSourceContext(new FetchSourceContext(false)))).get();
         assertNoFailures(response);
         assertHitCount(response, 1);
         hit = response.getHits().getAt(0);
@@ -444,7 +478,7 @@ public class InnerHitsIT extends ESIntegTestCase {
         indexRandom(true, requests);
         response = client().prepareSearch("articles")
                 .setQuery(nestedQuery("comments.messages", matchQuery("comments.messages.message", "fox"), ScoreMode.Avg)
-                        .innerHit(new InnerHitBuilder())).get();
+                        .innerHit(new InnerHitBuilder().setFetchSourceContext(new FetchSourceContext(false)))).get();
         assertNoFailures(response);
         assertHitCount(response, 1);
         hit = response.getHits().getAt(0);;

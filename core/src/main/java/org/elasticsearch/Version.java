@@ -29,7 +29,7 @@ import org.elasticsearch.monitor.jvm.JvmInfo;
 
 import java.io.IOException;
 
-public class Version {
+public class Version implements Comparable<Version> {
     /*
      * The logic for ID is: XXYYZZAA, where XX is major version, YY is minor version, ZZ is revision, and AA is alpha/beta/rc indicator AA
      * values below 25 are for alpha builder (since 5.0), and above 25 and below 50 are beta builds, and below 99 are RC builds, with 99
@@ -140,10 +140,17 @@ public class Version {
     public static final Version V_5_5_2 = new Version(V_5_5_2_ID, org.apache.lucene.util.Version.LUCENE_6_6_0);
     public static final int V_5_5_3_ID = 5050399;
     public static final Version V_5_5_3 = new Version(V_5_5_3_ID, org.apache.lucene.util.Version.LUCENE_6_6_0);
-    public static final int V_5_5_4_ID_UNRELEASED = 5050499;
-    public static final Version V_5_5_4_UNRELEASED = new Version(V_5_5_4_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_6_0);
-    public static final Version CURRENT = V_5_5_4_UNRELEASED;
-
+    public static final int V_5_6_0_ID = 5060099;
+    public static final Version V_5_6_0 = new Version(V_5_6_0_ID, org.apache.lucene.util.Version.LUCENE_6_6_0);
+    public static final int V_5_6_1_ID = 5060199;
+    public static final Version V_5_6_1 = new Version(V_5_6_1_ID, org.apache.lucene.util.Version.LUCENE_6_6_1);
+    public static final int V_5_6_2_ID = 5060299;
+    public static final Version V_5_6_2 = new Version(V_5_6_2_ID, org.apache.lucene.util.Version.LUCENE_6_6_1);
+    public static final int V_5_6_3_ID = 5060399;
+    public static final Version V_5_6_3 = new Version(V_5_6_3_ID, org.apache.lucene.util.Version.LUCENE_6_6_1);
+    public static final int V_5_6_4_ID_UNRELEASED = 5060499;
+    public static final Version V_5_6_4_UNRELEASED = new Version(V_5_6_4_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_6_1);
+    public static final Version CURRENT = V_5_6_4_UNRELEASED;
 
     // unreleased versions must be added to the above list with the suffix _UNRELEASED (with the exception of CURRENT)
 
@@ -158,8 +165,16 @@ public class Version {
 
     public static Version fromId(int id) {
         switch (id) {
-            case V_5_5_4_ID_UNRELEASED:
-                return V_5_5_4_UNRELEASED;
+            case V_5_6_4_ID_UNRELEASED:
+                return V_5_6_4_UNRELEASED;
+            case V_5_6_3_ID:
+                return V_5_6_3;
+            case V_5_6_2_ID:
+                return V_5_6_2;
+            case V_5_6_1_ID:
+                return V_5_6_1;
+            case V_5_6_0_ID:
+                return V_5_6_0;
             case V_5_5_3_ID:
                 return V_5_5_3;
             case V_5_5_2_ID:
@@ -393,6 +408,11 @@ public class Version {
 
     public boolean onOrBefore(Version version) {
         return version.id >= id;
+    }
+
+    @Override
+    public int compareTo(Version other) {
+        return Integer.compare(this.id, other.id);
     }
 
     /**

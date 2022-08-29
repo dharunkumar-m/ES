@@ -28,10 +28,12 @@ import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
 import org.apache.lucene.index.SnapshotDeletionPolicy;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.QueryCachingPolicy;
+import org.apache.lucene.search.ReferenceManager;
 import org.apache.lucene.search.UsageTrackingQueryCachingPolicy;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.ThreadInterruptedException;
+import org.elasticsearch.Assertions;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
@@ -56,7 +58,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.common.util.Callback;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.AsyncIOProcessor;
 import org.elasticsearch.index.Index;
@@ -612,7 +613,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
     public Engine.GetResult get(Engine.Get get) {
         readAllowed();
-        return getEngine().get(get, this::acquireSearcher, (timeElapsed) -> refreshMetric.inc(timeElapsed));
+        return getEngine().get(get, this::acquireSearcher);
     }
 
     /**
@@ -628,9 +629,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 if (logger.isTraceEnabled()) {
                     logger.trace("refresh with source [{}] indexBufferRAMBytesUsed [{}]", source, new ByteSizeValue(bytes));
                 }
-                long time = System.nanoTime();
                 getEngine().refresh(source);
-                refreshMetric.inc(System.nanoTime() - time);
             } finally {
                 if (logger.isTraceEnabled()) {
                     logger.trace("remove [{}] writing bytes for shard [{}]", new ByteSizeValue(bytes), shardId());
@@ -641,9 +640,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             if (logger.isTraceEnabled()) {
                 logger.trace("refresh with source [{}]", source);
             }
-            long time = System.nanoTime();
             getEngine().refresh(source);
-            refreshMetric.inc(System.nanoTime() - time);
         }
     }
 
@@ -1180,7 +1177,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
-    public void addShardFailureCallback(Callback<ShardFailure> onShardFailure) {
+    public void addShardFailureCallback(Consumer<ShardFailure> onShardFailure) {
         this.shardEventListener.delegates.add(onShardFailure);
     }
 
@@ -1561,15 +1558,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     class ShardEventListener implements Engine.EventListener {
-        private final CopyOnWriteArrayList<Callback<ShardFailure>> delegates = new CopyOnWriteArrayList<>();
+        private final CopyOnWriteArrayList<Consumer<ShardFailure>> delegates = new CopyOnWriteArrayList<>();
 
         // called by the current engine
         @Override
         public void onFailedEngine(String reason, @Nullable Exception failure) {
             final ShardFailure shardFailure = new ShardFailure(shardRouting, reason, failure);
-            for (Callback<ShardFailure> listener : delegates) {
+            for (Consumer<ShardFailure> listener : delegates) {
                 try {
-                    listener.handle(shardFailure);
+                    listener.accept(shardFailure);
                 } catch (Exception inner) {
                     inner.addSuppressed(failure);
                     logger.warn("exception while notifying engine failure", inner);
@@ -1638,11 +1635,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     private EngineConfig newEngineConfig(EngineConfig.OpenMode openMode, long maxUnsafeAutoIdTimestamp) {
         final IndexShardRecoveryPerformer translogRecoveryPerformer = new IndexShardRecoveryPerformer(shardId, mapperService, logger);
+        final List<ReferenceManager.RefreshListener> refreshListenerList = new ArrayList<>();
+        refreshListenerList.add(new RefreshMetricUpdater(refreshMetric));
+        if (refreshListeners != null) {
+            refreshListenerList.add(refreshListeners);
+        }
         return new EngineConfig(openMode, shardId,
             threadPool, indexSettings, warmer, store, deletionPolicy, indexSettings.getMergePolicy(),
             mapperService.indexAnalyzer(), similarityService.similarity(mapperService), codecService, shardEventListener, translogRecoveryPerformer, indexCache.query(), cachingPolicy, translogConfig,
-            IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()), refreshListeners,
-            maxUnsafeAutoIdTimestamp);
+            IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()),
+            refreshListenerList, maxUnsafeAutoIdTimestamp);
     }
 
     /**
@@ -1774,7 +1776,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Simple struct encapsulating a shard failure
      *
-     * @see IndexShard#addShardFailureCallback(Callback)
+     * @see IndexShard#addShardFailureCallback(Consumer)
      */
     public static final class ShardFailure {
         public final ShardRouting routing;
@@ -1844,6 +1846,38 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         @Override
         protected void delete(Engine engine, Engine.Delete engineDelete) throws IOException {
             IndexShard.this.delete(engine, engineDelete);
+        }
+    }
+
+    private static class RefreshMetricUpdater implements ReferenceManager.RefreshListener {
+
+        private final MeanMetric refreshMetric;
+        private long currentRefreshStartTime;
+        private Thread callingThread = null;
+
+        private RefreshMetricUpdater(MeanMetric refreshMetric) {
+            this.refreshMetric = refreshMetric;
+        }
+
+        @Override
+        public void beforeRefresh() throws IOException {
+            if (Assertions.ENABLED) {
+                assert callingThread == null : "beforeRefresh was called by " + callingThread.getName() +
+                    " without a corresponding call to afterRefresh";
+                callingThread = Thread.currentThread();
+            }
+            currentRefreshStartTime = System.nanoTime();
+        }
+
+        @Override
+        public void afterRefresh(boolean didRefresh) throws IOException {
+            if (Assertions.ENABLED) {
+                assert callingThread != null : "afterRefresh called but not beforeRefresh";
+                assert callingThread == Thread.currentThread() : "beforeRefreshed called by a different thread. current ["
+                    + Thread.currentThread().getName() + "], thread that called beforeRefresh [" + callingThread.getName() + "]";
+                callingThread = null;
+            }
+            refreshMetric.inc(System.nanoTime() - currentRefreshStartTime);
         }
     }
 }

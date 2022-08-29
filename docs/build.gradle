@@ -75,7 +75,7 @@ buildRestTests.expectedUnconvertedCandidates = [
   'reference/release-notes/5.0.0-alpha5.asciidoc',
   'reference/query-dsl/exists-query.asciidoc',
   'reference/search/field-stats.asciidoc',
-  'reference/search/profile.asciidoc',
+  'reference/search/profile.asciidoc'
 ]
 
 integTestCluster {
@@ -397,3 +397,4 @@ buildRestTests.setups['exams'] = '''
             {"grade": 100}
             {"index":{}}
             {"grade": 50}'''
+

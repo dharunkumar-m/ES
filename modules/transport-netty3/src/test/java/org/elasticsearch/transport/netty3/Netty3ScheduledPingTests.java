@@ -109,9 +109,9 @@ public class Netty3ScheduledPingTests extends ESTestCase {
         }
 
         assertBusy(() -> {
-            assertThat(nettyA.getPing().getSuccessfulPings(), greaterThan(100L));
-            assertThat(nettyB.getPing().getSuccessfulPings(), greaterThan(100L));
-        });
+                assertThat(nettyA.getPing().getSuccessfulPings(), greaterThan(100L));
+                assertThat(nettyB.getPing().getSuccessfulPings(), greaterThan(100L));
+            });
         assertThat(nettyA.getPing().getFailedPings(), equalTo(0L));
         assertThat(nettyB.getPing().getFailedPings(), equalTo(0L));
 
