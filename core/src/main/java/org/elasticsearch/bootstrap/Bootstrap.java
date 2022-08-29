@@ -222,12 +222,16 @@ final class Bootstrap {
         } catch (IOException | URISyntaxException e) {
             throw new BootstrapException(e);
         }
-
-        // install SM after natives, shutdown hooks, etc.
-        try {
-            Security.configure(environment, BootstrapSettings.SECURITY_FILTER_BAD_DEFAULTS_SETTING.get(settings));
-        } catch (IOException | NoSuchAlgorithmException e) {
-            throw new BootstrapException(e);
+        boolean installSM = BootstrapSettings.INSTALL_SM_SETTING.get(settings);
+        if(installSM) {
+            // install SM after natives, shutdown hooks, etc.
+            try {
+                final Logger logger = Loggers.getLogger(Bootstrap.class);
+                logger.info("installing SM since [{}] is set to true",BootstrapSettings.INSTALL_SM_SETTING.getKey());
+                Security.configure(environment, BootstrapSettings.SECURITY_FILTER_BAD_DEFAULTS_SETTING.get(settings));
+            } catch (IOException | NoSuchAlgorithmException e) {
+                throw new BootstrapException(e);
+            }
         }
 
         node = new Node(environment) {

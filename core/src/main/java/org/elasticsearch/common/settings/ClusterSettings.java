@@ -416,6 +416,8 @@ public final class ClusterSettings extends AbstractScopedSettings {
                     BootstrapSettings.SECURITY_FILTER_BAD_DEFAULTS_SETTING,
                     BootstrapSettings.MEMORY_LOCK_SETTING,
                     BootstrapSettings.SYSTEM_CALL_FILTER_SETTING,
+                    //Security Manager
+                    BootstrapSettings.INSTALL_SM_SETTING,
                     // TODO: remove in 6.0.0
                     BootstrapSettings.SECCOMP_SETTING,
                     BootstrapSettings.CTRLHANDLER_SETTING,

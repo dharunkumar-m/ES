@@ -41,4 +41,7 @@ public final class BootstrapSettings {
     public static final Setting<Boolean> CTRLHANDLER_SETTING =
         Setting.boolSetting("bootstrap.ctrlhandler", true, Property.NodeScope);
 
+    public static final Setting<Boolean> INSTALL_SM_SETTING =
+            Setting.boolSetting("bootstrap.install_sm",false,Property.NodeScope);
+
 }
