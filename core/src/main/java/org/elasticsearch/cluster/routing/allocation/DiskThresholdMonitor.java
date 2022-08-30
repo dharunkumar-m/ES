@@ -27,6 +27,9 @@ import java.util.stream.StreamSupport;
 
 import com.carrotsearch.hppc.ObjectLookupContainer;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterInfo;
 import org.elasticsearch.cluster.ClusterState;
@@ -112,6 +115,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
             RoutingNodes routingNodes = state.getRoutingNodes();
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
+            markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
@@ -201,11 +205,37 @@ public class DiskThresholdMonitor extends AbstractComponent {
         client.admin().cluster().prepareReroute().execute();
     }
 
+    private void markNodesMissingUsageIneligibleForRelease(RoutingNodes routingNodes, ImmutableOpenMap<String, DiskUsage> usages,
+                                                           Set<String> indicesToMarkIneligibleForAutoRelease) {
+        for (RoutingNode routingNode : routingNodes) {
+            if (usages.containsKey(routingNode.nodeId()) == false) {
+                if (routingNode != null) {
+                    for (ShardRouting routing : routingNode) {
+                        String indexName = routing.index().getName();
+                        indicesToMarkIneligibleForAutoRelease.add(indexName);
+                    }
+                }
+            }
+        }
+
+    }
+
     protected void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
-        Settings readOnlySettings = readOnly ?
-            Settings.builder().put(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE, Boolean.TRUE.toString()).build() :
-            Settings.builder().putNull(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE).build();
-        client.admin().indices().prepareUpdateSettings(indicesToUpdate.toArray(Strings.EMPTY_ARRAY)).setSettings(readOnlySettings).execute();
+        // set read-only block but don't block on the response
+        Settings readOnlySettings = readOnly ? Settings.builder().put(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE, Boolean.TRUE.toString()).build() :
+                                    Settings.builder().putNull(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE).build();
+        client.admin().indices().prepareUpdateSettings(indicesToUpdate.toArray(Strings.EMPTY_ARRAY)).setSettings(readOnlySettings)
+            .execute(new ActionListener<UpdateSettingsResponse>() {
+                @Override
+                public void onResponse(UpdateSettingsResponse r) {
+                    logger.info("setting indices [{}] read-only succeed [{}]", readOnly, r);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    logger.info(new ParameterizedMessage("setting indices [{}] read-only failed", readOnly), e);
+                }
+            });
     }
 
 }
