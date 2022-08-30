@@ -30,6 +30,7 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterInfo;
 import org.elasticsearch.cluster.ClusterInfoService;
 import org.elasticsearch.cluster.DiskUsage;
+import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.AbstractComponent;
@@ -53,6 +54,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
     private final DiskThresholdSettings diskThresholdSettings;
     private final Client client;
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
+    public static final Set<String> readOnlyNodes = new HashSet<>();
 
     private long lastRunNS;
 
@@ -113,15 +115,17 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
 
             //ClusterState state = clusterStateSupplier.get();
             ClusterState state = client.admin().cluster().prepareState().setLocal(true).get().getState();
+            RoutingNodes routingNodes = state.getRoutingNodes();
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
                 warnAboutDiskIfNeeded(usage);
-                RoutingNode routingNode = state.getRoutingNodes().node(node);
+                RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+                    readOnlyNodes.add(node);
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -166,6 +170,11 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
                                     "in the last [{}], skipping reroute",
                                 node, diskThresholdSettings.getRerouteInterval());
                         }
+                    }
+                    if(readOnlyNodes.contains(node)) {
+                        reroute = true;
+                        explanation = "one or more nodes has gone under the high or low watermark";
+                        readOnlyNodes.remove(node);
                     }
                 }
             }
