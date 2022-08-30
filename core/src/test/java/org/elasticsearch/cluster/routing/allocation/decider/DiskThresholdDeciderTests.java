@@ -106,10 +106,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
         AllocationService strategy = new AllocationService(Settings.builder()
                 .put("cluster.routing.allocation.node_concurrent_recoveries", 10)
@@ -294,10 +290,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
 
         AllocationService strategy = new AllocationService(Settings.builder()
@@ -352,10 +344,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo2;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
         strategy = new AllocationService(Settings.builder()
                 .put("cluster.routing.allocation.node_concurrent_recoveries", 10)
@@ -550,10 +538,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
 
         AllocationService strategy = new AllocationService(Settings.builder()
@@ -622,10 +606,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
 
         AllocationService strategy = new AllocationService(Settings.builder()
@@ -728,10 +708,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
 
         AllocationService strategy = new AllocationService(Settings.builder()
@@ -916,10 +892,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-                // noop
-            }
         };
         AllocationDeciders deciders = new AllocationDeciders(Settings.EMPTY, new HashSet<>(Arrays.asList(
                 new SameShardAllocationDecider(
@@ -1017,9 +989,6 @@ public class DiskThresholdDeciderTests extends ESAllocationTestCase {
                 return clusterInfo;
             }
 
-            @Override
-            public void addListener(Listener listener) {
-            }
         };
 
         AllocationDeciders deciders = new AllocationDeciders(Settings.EMPTY, new HashSet<>(Arrays.asList(

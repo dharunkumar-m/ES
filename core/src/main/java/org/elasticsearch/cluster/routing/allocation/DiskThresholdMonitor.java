@@ -19,8 +19,9 @@
 
 package org.elasticsearch.cluster.routing.allocation;
 
-import java.util.Set;
 import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -28,44 +29,39 @@ import com.carrotsearch.hppc.ObjectLookupContainer;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterInfo;
-import org.elasticsearch.cluster.ClusterInfoService;
-import org.elasticsearch.cluster.DiskUsage;
-import org.elasticsearch.cluster.routing.RoutingNodes;
-import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.collect.ImmutableOpenMap;
-import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.ClusterSettings;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.util.set.Sets;
-
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.DiskUsage;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.collect.ImmutableOpenMap;
+import org.elasticsearch.common.component.AbstractComponent;
+import org.elasticsearch.common.settings.ClusterSettings;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.set.Sets;
 
 /**
  * Listens for a node to go over the high watermark and kicks off an empty
  * reroute if it does. Also responsible for logging about nodes that have
  * passed the disk watermarks
  */
-public class DiskThresholdMonitor extends AbstractComponent implements ClusterInfoService.Listener {
+public class DiskThresholdMonitor extends AbstractComponent {
     private final DiskThresholdSettings diskThresholdSettings;
     private final Client client;
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
+    private final Supplier<ClusterState> clusterStateSupplier;
     public static final Set<String> readOnlyNodes = new HashSet<>();
-
     private long lastRunNS;
 
-    // TODO: remove injection when ClusterInfoService is not injected
-    @Inject
-    public DiskThresholdMonitor(Settings settings, ClusterSettings clusterSettings,
-                                ClusterInfoService infoService, Client client) {
+    public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
+                                Client client) {
         super(settings);
+        this.clusterStateSupplier = clusterStateSupplier;
         this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
         this.client = client;
-        infoService.addListener(this);
     }
 
     /**
@@ -85,7 +81,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
 
         // Check percentage disk values
-        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
             logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
                 Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdFloodStage(), "%"), usage);
         } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
@@ -97,7 +93,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
     }
 
-    @Override
+
     public void onNewInfo(ClusterInfo info) {
         ImmutableOpenMap<String, DiskUsage> usages = info.getNodeLeastAvailableDiskUsages();
         if (usages != null) {
@@ -112,9 +108,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
                     nodeHasPassedWatermark.remove(node);
                 }
             }
-
-            //ClusterState state = clusterStateSupplier.get();
-            ClusterState state = client.admin().cluster().prepareState().setLocal(true).get().getState();
+            ClusterState state = clusterStateSupplier.get();
             RoutingNodes routingNodes = state.getRoutingNodes();
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
@@ -180,8 +174,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
             }
             if (reroute) {
                 logger.info("rerouting shards: [{}]", explanation);
-                // Execute an empty reroute, but don't block on the response
-                client.admin().cluster().prepareReroute().execute();
+                reroute();
             }
 
             Set<String> indicesToAutoRelease = StreamSupport.stream(state.routingTable().indicesRouting()
@@ -203,7 +196,12 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
     }
 
-    private void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
+    protected void reroute() {
+        // Execute an empty reroute, but don't block on the response
+        client.admin().cluster().prepareReroute().execute();
+    }
+
+    protected void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
         Settings readOnlySettings = readOnly ?
             Settings.builder().put(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE, Boolean.TRUE.toString()).build() :
             Settings.builder().putNull(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE).build();

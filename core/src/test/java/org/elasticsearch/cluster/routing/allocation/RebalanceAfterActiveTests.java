@@ -43,9 +43,6 @@ import static org.elasticsearch.cluster.routing.ShardRoutingState.UNASSIGNED;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 
-/**
- *
- */
 public class RebalanceAfterActiveTests extends ESAllocationTestCase {
     private final Logger logger = Loggers.getLogger(RebalanceAfterActiveTests.class);
 
@@ -60,23 +57,15 @@ public class RebalanceAfterActiveTests extends ESAllocationTestCase {
                         .put(ClusterRebalanceAllocationDecider.CLUSTER_ROUTING_ALLOCATION_ALLOW_REBALANCE_SETTING.getKey(), "always")
                         .put("cluster.routing.allocation.cluster_concurrent_rebalance", -1)
                         .build(),
-                new ClusterInfoService() {
-                    @Override
-                    public ClusterInfo getClusterInfo() {
-                        return new ClusterInfo() {
-                            @Override
-                            public Long getShardSize(ShardRouting shardRouting) {
-                                if (shardRouting.getIndexName().equals("test")) {
-                                    return sizes[shardRouting.getId()];
-                                }
-                                return null;                    }
-                        };
+            () -> new ClusterInfo() {
+                @Override
+                public Long getShardSize(ShardRouting shardRouting) {
+                    if (shardRouting.getIndexName().equals("test")) {
+                        return sizes[shardRouting.getId()];
                     }
-
-                    @Override
-                    public void addListener(Listener listener) {
-                    }
-                });
+                    return null;
+                }
+            });
         logger.info("Building initial routing table");
 
         MetaData metaData = MetaData.builder()
