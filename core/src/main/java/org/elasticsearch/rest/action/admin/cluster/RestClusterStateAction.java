@@ -82,6 +82,7 @@ public class RestClusterStateAction extends BaseRestHandler {
             clusterStateRequest.metaData(metrics.contains(ClusterState.Metric.METADATA));
             clusterStateRequest.blocks(metrics.contains(ClusterState.Metric.BLOCKS));
             clusterStateRequest.customs(metrics.contains(ClusterState.Metric.CUSTOMS));
+            clusterStateRequest.readOnlyNodes(metrics.contains(ClusterState.Metric.READONLYNODES));
         }
         settingsFilter.addFilterSettingParams(request);
 

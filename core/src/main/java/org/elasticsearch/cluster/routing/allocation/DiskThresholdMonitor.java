@@ -19,8 +19,8 @@
 
 package org.elasticsearch.cluster.routing.allocation;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.CountDownLatch;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -31,14 +31,15 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.ClusterInfo;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.DiskUsage;
+import org.elasticsearch.cluster.*;
+import org.elasticsearch.cluster.ack.ClusterStateUpdateResponse;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.AbstractComponent;
@@ -56,15 +57,17 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Client client;
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
-    public static final Set<String> readOnlyNodes = new HashSet<>();
+    private final ClusterService clusterService;
+    private final Set<String> readOnlyNodes = new HashSet<>();
     private long lastRunNS;
 
     public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
-                                Client client) {
+                                Client client, ClusterService clusterService) {
         super(settings);
         this.clusterStateSupplier = clusterStateSupplier;
         this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
         this.client = client;
+        this.clusterService = clusterService;
     }
 
     /**
@@ -197,6 +200,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
+            updateReadOnlyNodes();
         }
     }
 
@@ -236,6 +240,24 @@ public class DiskThresholdMonitor extends AbstractComponent {
                     logger.info(new ParameterizedMessage("setting indices [{}] read-only failed", readOnly), e);
                 }
             });
+    }
+
+    private void updateReadOnlyNodes() {
+        logger.info("--> submit task to update Read Only Nodes list " + clusterService.state().readOnlyNodes().toString());
+
+            clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
+            @Override
+            public ClusterState execute(ClusterState currentState) throws Exception {
+                List<String> temp = new ArrayList<>();
+                temp.addAll(readOnlyNodes);
+                return ClusterState.builder(currentState).readOnlyNodes(temp).build();
+            }
+
+            @Override
+            public void onFailure(String source, Exception e) {
+                throw new AssertionError(e);
+            }
+        });
     }
 
 }

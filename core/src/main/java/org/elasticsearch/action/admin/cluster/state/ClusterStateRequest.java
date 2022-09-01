@@ -28,6 +28,8 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  *
@@ -41,6 +43,7 @@ public class ClusterStateRequest extends MasterNodeReadRequest<ClusterStateReque
     private boolean customs = true;
     private String[] indices = Strings.EMPTY_ARRAY;
     private IndicesOptions indicesOptions = IndicesOptions.lenientExpandOpen();
+    private boolean readOnlyNodes = true;
 
     public ClusterStateRequest() {
     }
@@ -57,6 +60,7 @@ public class ClusterStateRequest extends MasterNodeReadRequest<ClusterStateReque
         blocks = true;
         customs = true;
         indices = Strings.EMPTY_ARRAY;
+        readOnlyNodes = true;
         return this;
     }
 
@@ -67,6 +71,7 @@ public class ClusterStateRequest extends MasterNodeReadRequest<ClusterStateReque
         blocks = false;
         customs = false;
         indices = Strings.EMPTY_ARRAY;
+        readOnlyNodes = false;
         return this;
     }
 
@@ -103,6 +108,15 @@ public class ClusterStateRequest extends MasterNodeReadRequest<ClusterStateReque
 
     public ClusterStateRequest blocks(boolean blocks) {
         this.blocks = blocks;
+        return this;
+    }
+
+    public boolean readOnlyNodes() {
+        return readOnlyNodes;
+    }
+
+    public ClusterStateRequest readOnlyNodes(boolean readOnlyNodes) {
+        this.readOnlyNodes = readOnlyNodes;
         return this;
     }
 

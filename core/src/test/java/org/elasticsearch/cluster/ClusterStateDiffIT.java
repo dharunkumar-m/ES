@@ -143,6 +143,7 @@ public class ClusterStateDiffIT extends ESIntegTestCase {
                 // Check non-diffable elements
                 assertThat(clusterStateFromDiffs.version(), equalTo(clusterState.version()));
                 assertThat(clusterStateFromDiffs.stateUUID(), equalTo(clusterState.stateUUID()));
+                assertThat(clusterStateFromDiffs.readOnlyNodes(), equalTo(clusterState.readOnlyNodes()));
 
                 // Check nodes
                 assertThat(clusterStateFromDiffs.nodes().getNodes(), equalTo(clusterState.nodes().getNodes()));

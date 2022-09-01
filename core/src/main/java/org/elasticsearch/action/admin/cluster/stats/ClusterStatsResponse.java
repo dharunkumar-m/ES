@@ -65,10 +65,6 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
         }
     }
 
-    public Set<String> getReadOnlyNodes(){
-        return DiskThresholdMonitor.readOnlyNodes;
-    }
-
     public long getTimestamp() {
         return this.timestamp;
     }
@@ -123,7 +119,6 @@ public class ClusterStatsResponse extends BaseNodesResponse<ClusterStatsNodeResp
         if (status != null) {
             builder.field("status", status.name().toLowerCase(Locale.ROOT));
         }
-        builder.field("readOnlyNodes", getReadOnlyNodes());
         builder.startObject("indices");
         indicesStats.toXContent(builder, params);
         builder.endObject();

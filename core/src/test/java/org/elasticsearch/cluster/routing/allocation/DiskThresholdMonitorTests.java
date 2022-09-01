@@ -77,7 +77,7 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         AtomicBoolean reroute = new AtomicBoolean(false);
         AtomicReference<Set<String>> indices = new AtomicReference<>();
         DiskThresholdMonitor monitor = new DiskThresholdMonitor(settings, () -> finalState,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null) {
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, null) {
             @Override
             protected void reroute() {
                 assertTrue(reroute.compareAndSet(false, true));
@@ -117,7 +117,7 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         assertTrue(anotherFinalClusterState.blocks().indexBlocked(ClusterBlockLevel.WRITE, "test_2"));
 
         monitor = new DiskThresholdMonitor(settings, () -> anotherFinalClusterState,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null) {
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, null) {
             @Override
             protected void reroute() {
                 assertTrue(reroute.compareAndSet(false, true));
