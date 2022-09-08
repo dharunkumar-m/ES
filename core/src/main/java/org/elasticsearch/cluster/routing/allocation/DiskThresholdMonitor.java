@@ -101,6 +101,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
 
 
     public void onNewInfo(ClusterInfo info) {
+        boolean valChanged = false;
         ImmutableOpenMap<String, DiskUsage> usages = info.getNodeLeastAvailableDiskUsages();
         if (usages != null) {
             boolean reroute = false;
@@ -127,6 +128,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
                     readOnlyNodes.add(node);
+                    valChanged = true;
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -176,6 +178,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                         reroute = true;
                         explanation = "one or more nodes has gone under the high or low watermark";
                         readOnlyNodes.remove(node);
+                        valChanged = true;
                     }
                 }
             }
@@ -200,7 +203,9 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
-            updateReadOnlyNodes();
+            if(valChanged) {
+                updateReadOnlyNodes();
+            }
         }
     }
 
@@ -243,7 +248,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
     }
 
     private void updateReadOnlyNodes() {
-        logger.info("--> submit task to update Read Only Nodes list " + clusterService.state().readOnlyNodes().toString());
+        logger.info("submit task to update Read Only Nodes list " + clusterService.state().readOnlyNodes().toString());
 
             clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
             @Override
