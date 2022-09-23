@@ -123,11 +123,12 @@ public class DiskThresholdMonitor extends AbstractComponent {
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
+                String nodeName = usage.getNodeName();
                 warnAboutDiskIfNeeded(usage);
                 RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
-                    readOnlyNodes.add(node);
+                    readOnlyNodes.add(nodeName);
                     valChanged = true;
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
@@ -174,10 +175,10 @@ public class DiskThresholdMonitor extends AbstractComponent {
                                 node, diskThresholdSettings.getRerouteInterval());
                         }
                     }
-                    if(readOnlyNodes.contains(node)) {
+                    if(readOnlyNodes.contains(nodeName)) {
                         reroute = true;
                         explanation = "one or more nodes has gone under the high or low watermark";
-                        readOnlyNodes.remove(node);
+                        readOnlyNodes.remove(nodeName);
                         valChanged = true;
                     }
                 }
