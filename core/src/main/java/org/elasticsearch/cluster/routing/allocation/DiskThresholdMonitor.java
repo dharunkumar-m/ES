@@ -20,7 +20,6 @@
 package org.elasticsearch.cluster.routing.allocation;
 
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -32,7 +31,6 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.*;
-import org.elasticsearch.cluster.ack.ClusterStateUpdateResponse;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.routing.RoutingNode;
@@ -58,7 +56,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
     private final ClusterService clusterService;
-    private final Set<String> readOnlyNodes = new HashSet<>();
+    public final Set<String> readOnlyNodes = new HashSet<>();
     private long lastRunNS;
 
     public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
@@ -249,7 +247,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
     }
 
     private void updateReadOnlyNodes() {
-        logger.info("submit task to update Read Only Nodes list " + clusterService.state().readOnlyNodes().toString());
+        logger.info("submit task to update Read Only Nodes list " + readOnlyNodes);
 
             clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
             @Override

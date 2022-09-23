@@ -19,52 +19,43 @@
 package org.elasticsearch.cluster.routing.allocation;
 
 import org.elasticsearch.Version;
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.cluster.ClusterInfo;
-import org.elasticsearch.cluster.ClusterName;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.DiskUsage;
-import org.elasticsearch.cluster.ESAllocationTestCase;
+import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
+import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.common.transport.LocalTransportAddress;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.cluster.routing.ShardRoutingState.INITIALIZING;
-
 public class DiskThresholdMonitorTests extends ESAllocationTestCase {
-
 
     public void testMarkFloodStageIndicesReadOnly() {
         AllocationService allocation = createAllocationService(Settings.builder()
             .put("cluster.routing.allocation.node_concurrent_recoveries", 10).build());
-        Settings settings = Settings.EMPTY;
         MetaData metaData = MetaData.builder()
-            .put(IndexMetaData.builder("test").settings(settings(Version.CURRENT)
-                .put("index.routing.allocation.require._id", "node2")).numberOfShards(1).numberOfReplicas(0))
             .put(IndexMetaData.builder("test_1").settings(settings(Version.CURRENT)
                 .put("index.routing.allocation.require._id", "node1")).numberOfShards(1).numberOfReplicas(0))
             .put(IndexMetaData.builder("test_2").settings(settings(Version.CURRENT)
-                .put("index.routing.allocation.require._id", "node1")).numberOfShards(1).numberOfReplicas(0))
+                .put("index.routing.allocation.require._id", "node2")).numberOfShards(1).numberOfReplicas(0))
             .build();
         RoutingTable routingTable = RoutingTable.builder()
-            .addAsNew(metaData.index("test"))
             .addAsNew(metaData.index("test_1"))
             .addAsNew(metaData.index("test_2"))
-
             .build();
+
         ClusterState clusterState = ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY))
             .metaData(metaData).routingTable(routingTable).build();
         logger.info("adding two nodes and performing rerouting");
@@ -74,69 +65,93 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         logger.info("start primary shard");
         clusterState = allocation.applyStartedShards(clusterState, clusterState.getRoutingNodes().shardsWithState(INITIALIZING));
         ClusterState finalState = clusterState;
-        AtomicBoolean reroute = new AtomicBoolean(false);
-        AtomicReference<Set<String>> indices = new AtomicReference<>();
-        DiskThresholdMonitor monitor = new DiskThresholdMonitor(settings, () -> finalState,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, null) {
+
+        AtomicReference<Set<String>> indicesToMarkReadOnly = new AtomicReference<>();
+        AtomicReference<Set<String>> indicesToRelease = new AtomicReference<>();
+        AtomicReference<Set<String>> nodes = new AtomicReference<>();
+
+        ClusterService clusterService = new ClusterService(Settings.EMPTY,
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, () ->
+            new DiscoveryNode(UUIDs.randomBase64UUID(), LocalTransportAddress.buildUnique(), Version.CURRENT));
+
+        DiskThresholdMonitor monitor = new DiskThresholdMonitor(Settings.EMPTY, () -> finalState,
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, clusterService) {
             @Override
             protected void reroute() {
-                assertTrue(reroute.compareAndSet(false, true));
             }
 
             @Override
-            protected void updateIndicesReadOnly(Set<String> indicesToMarkReadOnly, boolean readOnly) {
-                assertTrue(indices.compareAndSet(null, indicesToMarkReadOnly));
-                assertTrue(readOnly);
+            protected void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
+                if (readOnly) {
+                    assertTrue(indicesToMarkReadOnly.compareAndSet(null, indicesToUpdate));
+                } else {
+                    assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
+                }
             }
         };
+
+        //One Node Disk is below flood stage watermark
         ImmutableOpenMap.Builder<String, DiskUsage> builder = ImmutableOpenMap.builder();
-        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, 4));
-        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, 30));
+        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(0, 4)));
+        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(10, 100)));
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertFalse(reroute.get());
-        assertEquals(new HashSet<>(Arrays.asList("test_1", "test_2")), indices.get());
+        assertTrue(nodes.compareAndSet(null, monitor.readOnlyNodes));
+        assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToMarkReadOnly.get());
+        assertNull(indicesToRelease.get());
+        assertEquals(new HashSet<>(Arrays.asList("node1")), nodes.get());
 
-        indices.set(null);
+        indicesToMarkReadOnly.set(null);
+        indicesToRelease.set(null);
+        nodes.set(null);
+
+        //Both Node Disk is below flood stage watermark
         builder = ImmutableOpenMap.builder();
-        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, 4));
-        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, 5));
+        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(0, 4)));
+        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(0, 4)));
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertTrue(reroute.get());
-        assertEquals(new HashSet<>(Arrays.asList("test_1", "test_2")), indices.get());
-        IndexMetaData indexMetaData = IndexMetaData.builder(clusterState.metaData().index("test_2")).settings(Settings.builder()
-            .put(clusterState.metaData()
-                .index("test_2").getSettings())
-            .put(IndexMetaData.INDEX_BLOCKS_READ_ONLY_ALLOW_DELETE_SETTING.getKey(), true)).build();
+        assertTrue(nodes.compareAndSet(null, monitor.readOnlyNodes));
+        assertEquals(new HashSet<>(Arrays.asList("test_1", "test_2")), indicesToMarkReadOnly.get());
+        assertNull(indicesToRelease.get());
+        assertEquals(new HashSet<>(Arrays.asList("node1", "node2")), nodes.get());
 
-        // now we mark one index as read-only and assert that we don't mark it as such again
-        final ClusterState anotherFinalClusterState = ClusterState.builder(clusterState).metaData(MetaData.builder(clusterState.metaData())
-                .put(clusterState.metaData().index("test"), false)
-                .put(clusterState.metaData().index("test_1"), false)
+        indicesToMarkReadOnly.set(null);
+        indicesToRelease.set(null);
+        nodes.set(null);
+
+        //Setting indices of one node to read-only
+        IndexMetaData indexMetaData = IndexMetaData.builder(clusterState.metaData().index("test_1")).settings(Settings.builder()
+            .put(clusterState.metaData()
+                .index("test_1").getSettings())
+            .put(IndexMetaData.INDEX_BLOCKS_READ_ONLY_ALLOW_DELETE_SETTING.getKey(), true)).build();
+        ClusterState clusterStateWithBlocks = ClusterState.builder(clusterState).metaData(MetaData.builder(clusterState.metaData())
                 .put(indexMetaData, true).build())
             .blocks(ClusterBlocks.builder().addBlocks(indexMetaData).build()).build();
-        assertTrue(anotherFinalClusterState.blocks().indexBlocked(ClusterBlockLevel.WRITE, "test_2"));
+        assertTrue(clusterStateWithBlocks.blocks().indexBlocked(ClusterBlockLevel.WRITE, "test_1"));
 
-        monitor = new DiskThresholdMonitor(settings, () -> anotherFinalClusterState,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, null) {
+        DiskThresholdMonitor newMonitor = new DiskThresholdMonitor(Settings.EMPTY, () -> clusterStateWithBlocks,
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, clusterService) {
             @Override
             protected void reroute() {
-                assertTrue(reroute.compareAndSet(false, true));
             }
 
             @Override
-            protected void updateIndicesReadOnly(Set<String> indicesToMarkReadOnly, boolean readOnly) {
-                assertTrue(indices.compareAndSet(null, indicesToMarkReadOnly));
-                assertTrue(readOnly);
+            protected void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
+                if (readOnly) {
+                    assertTrue(indicesToMarkReadOnly.compareAndSet(null, indicesToUpdate));
+                } else {
+                    assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
+                }
             }
         };
 
-        indices.set(null);
-        reroute.set(false);
+        //Setting one node disk space beyond flood stage, in which the indices were read-only
         builder = ImmutableOpenMap.builder();
-        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, 4));
-        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, 5));
-        monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertTrue(reroute.get());
-        assertEquals(new HashSet<>(Arrays.asList("test_1")), indices.get());
+        builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(10, 100)));
+        builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(0, 4)));
+        newMonitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
+        assertTrue(nodes.compareAndSet(null, newMonitor.readOnlyNodes));
+        assertEquals(new HashSet<>(Arrays.asList("test_2")), indicesToMarkReadOnly.get());
+        assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToRelease.get());
+        assertEquals(new HashSet<>(Arrays.asList("node2")), nodes.get());
     }
 }
