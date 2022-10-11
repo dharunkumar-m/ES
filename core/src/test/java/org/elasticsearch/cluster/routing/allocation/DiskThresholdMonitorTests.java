@@ -68,7 +68,7 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
 
         AtomicReference<Set<String>> indicesToMarkReadOnly = new AtomicReference<>();
         AtomicReference<Set<String>> indicesToRelease = new AtomicReference<>();
-        AtomicReference<Set<String>> nodes = new AtomicReference<>();
+        AtomicReference<Set<String>> nodesReadOnly = new AtomicReference<>();
 
         ClusterService clusterService = new ClusterService(Settings.EMPTY,
             new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, () ->
@@ -88,6 +88,11 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
                     assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
                 }
             }
+
+            @Override
+            protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
+                assertTrue(nodesReadOnly.compareAndSet(null, readOnlyNodes));
+            }
         };
 
         //One Node Disk is below flood stage watermark
@@ -95,28 +100,26 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(0, 4)));
         builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(10, 100)));
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertTrue(nodes.compareAndSet(null, monitor.readOnlyNodes));
         assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToMarkReadOnly.get());
         assertNull(indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node1")), nodes.get());
+        assertEquals(new HashSet<>(Arrays.asList("node1")), nodesReadOnly.get());
 
         indicesToMarkReadOnly.set(null);
         indicesToRelease.set(null);
-        nodes.set(null);
+        nodesReadOnly.set(null);
 
         //Both Node Disk is below flood stage watermark
         builder = ImmutableOpenMap.builder();
         builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(0, 4)));
         builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(0, 4)));
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertTrue(nodes.compareAndSet(null, monitor.readOnlyNodes));
         assertEquals(new HashSet<>(Arrays.asList("test_1", "test_2")), indicesToMarkReadOnly.get());
         assertNull(indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node1", "node2")), nodes.get());
+        assertEquals(new HashSet<>(Arrays.asList("node1", "node2")), nodesReadOnly.get());
 
         indicesToMarkReadOnly.set(null);
         indicesToRelease.set(null);
-        nodes.set(null);
+        nodesReadOnly.set(null);
 
         //Setting indices of one node to read-only
         IndexMetaData indexMetaData = IndexMetaData.builder(clusterState.metaData().index("test_1")).settings(Settings.builder()
@@ -142,6 +145,11 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
                     assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
                 }
             }
+
+            @Override
+            protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
+                assertTrue(nodesReadOnly.compareAndSet(null, readOnlyNodes));
+            }
         };
 
         //Setting one node disk space beyond flood stage, in which the indices were read-only
@@ -149,9 +157,8 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         builder.put("node1", new DiskUsage("node1","node1", "/foo/bar", 100, between(10, 100)));
         builder.put("node2", new DiskUsage("node2","node2", "/foo/bar", 100, between(0, 4)));
         newMonitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
-        assertTrue(nodes.compareAndSet(null, newMonitor.readOnlyNodes));
         assertEquals(new HashSet<>(Arrays.asList("test_2")), indicesToMarkReadOnly.get());
         assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node2")), nodes.get());
+        assertEquals(new HashSet<>(Arrays.asList("node2")), nodesReadOnly.get());
     }
 }
