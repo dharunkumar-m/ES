@@ -56,7 +56,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
     private final ClusterService clusterService;
-    public final Set<String> readOnlyNodes = new HashSet<>();
     private long lastRunNS;
 
     public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
@@ -99,7 +98,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
 
 
     public void onNewInfo(ClusterInfo info) {
-        boolean valChanged = false;
         ImmutableOpenMap<String, DiskUsage> usages = info.getNodeLeastAvailableDiskUsages();
         if (usages != null) {
             boolean reroute = false;
@@ -115,6 +113,9 @@ public class DiskThresholdMonitor extends AbstractComponent {
             }
             ClusterState state = clusterStateSupplier.get();
             RoutingNodes routingNodes = state.getRoutingNodes();
+            Set<String> readOnlyNodes = new HashSet<>();
+            readOnlyNodes.addAll(state.readOnlyNodes());
+            boolean readOnlyNodesUpdated = false;
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
             markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
@@ -127,7 +128,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
                     readOnlyNodes.add(nodeName);
-                    valChanged = true;
+                    readOnlyNodesUpdated = true;
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -177,7 +178,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                         reroute = true;
                         explanation = "one or more nodes has gone under the high or low watermark";
                         readOnlyNodes.remove(nodeName);
-                        valChanged = true;
+                        readOnlyNodesUpdated = true;
                     }
                 }
             }
@@ -202,8 +203,8 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
-            if(valChanged) {
-                updateReadOnlyNodes();
+            if(readOnlyNodesUpdated) {
+                updateReadOnlyNodes(readOnlyNodes);
             }
         }
     }
@@ -246,7 +247,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
             });
     }
 
-    private void updateReadOnlyNodes() {
+    protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
         logger.info("submit task to update Read Only Nodes list " + readOnlyNodes);
 
             clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
