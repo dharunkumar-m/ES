@@ -270,7 +270,7 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         ROUTING_TABLE("routing_table"),
         ROUTING_NODES("routing_nodes"),
         CUSTOMS("customs"),
-        READONLYNODES("readOnlyNodes");
+        READ_ONLY_NODES("read_only_nodes");
 
         private static Map<String, Metric> valueToEnum;
 
@@ -326,8 +326,8 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             builder.field("master_node", nodes().getMasterNodeId());
         }
 
-        if (metrics.contains(Metric.READONLYNODES)) {
-            builder.field("readOnlyNodes", readOnlyNodes);
+        if (metrics.contains(Metric.READ_ONLY_NODES)) {
+            builder.field("read_only_nodes", readOnlyNodes);
         }
 
         if (metrics.contains(Metric.BLOCKS)) {
