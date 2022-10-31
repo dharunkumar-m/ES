@@ -129,6 +129,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
                     if(!readOnlyNodes.contains(nodeName)) {
                         readOnlyNodes.add(nodeName);
+                        logger.info("Adding {} to readOnlyNodes list, since the node's free space is below flood stage threshold",nodeName);
                         readOnlyNodesUpdated = true;
                     }
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
@@ -174,6 +175,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 if(usage.getFreeBytes() > diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes()){
                     if(readOnlyNodes.contains(nodeName)) {
                         readOnlyNodes.remove(nodeName);
+                        logger.info("Removing {} from readOnlyNodes list, since the node's free space is above flood stage threshold",nodeName);
                         readOnlyNodesUpdated = true;
                     }
                 }
