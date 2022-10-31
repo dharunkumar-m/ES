@@ -150,17 +150,9 @@ public class DiskThresholdMonitor extends AbstractComponent {
                             node, diskThresholdSettings.getRerouteInterval());
                     }
                     nodeHasPassedWatermark.add(node);
-                    if(readOnlyNodes.contains(nodeName)) {
-                        readOnlyNodes.remove(nodeName);
-                        readOnlyNodesUpdated = true;
-                    }
                 } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdLow().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdLow()) {
                     nodeHasPassedWatermark.add(node);
-                    if(readOnlyNodes.contains(nodeName)) {
-                        readOnlyNodes.remove(nodeName);
-                        readOnlyNodesUpdated = true;
-                    }
                 } else {
                     if (nodeHasPassedWatermark.contains(node)) {
                         // The node has previously been over the high or
@@ -178,9 +170,9 @@ public class DiskThresholdMonitor extends AbstractComponent {
                                 node, diskThresholdSettings.getRerouteInterval());
                         }
                     }
+                }
+                if(usage.getFreeBytes() > diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes()){
                     if(readOnlyNodes.contains(nodeName)) {
-                        reroute = true;
-                        explanation = "one or more nodes has gone under the high or low watermark";
                         readOnlyNodes.remove(nodeName);
                         readOnlyNodesUpdated = true;
                     }
