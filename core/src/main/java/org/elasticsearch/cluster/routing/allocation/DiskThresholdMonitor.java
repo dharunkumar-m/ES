@@ -127,8 +127,10 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
-                    readOnlyNodes.add(nodeName);
-                    readOnlyNodesUpdated = true;
+                    if(!readOnlyNodes.contains(nodeName)) {
+                        readOnlyNodes.add(nodeName);
+                        readOnlyNodesUpdated = true;
+                    }
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -138,12 +140,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
                     }
                 } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
-                    if (routingNode != null) {
-                        for (ShardRouting routing : routingNode) {
-                            String indexName = routing.index().getName();
-                            indicesNotToAutoRelease.add(indexName);
-                        }
-                    }
                     if ((System.nanoTime() - lastRunNS) > diskThresholdSettings.getRerouteInterval().nanos()) {
                         lastRunNS = System.nanoTime();
                         reroute = true;
@@ -154,9 +150,17 @@ public class DiskThresholdMonitor extends AbstractComponent {
                             node, diskThresholdSettings.getRerouteInterval());
                     }
                     nodeHasPassedWatermark.add(node);
+                    if(readOnlyNodes.contains(nodeName)) {
+                        readOnlyNodes.remove(nodeName);
+                        readOnlyNodesUpdated = true;
+                    }
                 } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdLow().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdLow()) {
                     nodeHasPassedWatermark.add(node);
+                    if(readOnlyNodes.contains(nodeName)) {
+                        readOnlyNodes.remove(nodeName);
+                        readOnlyNodesUpdated = true;
+                    }
                 } else {
                     if (nodeHasPassedWatermark.contains(node)) {
                         // The node has previously been over the high or
