@@ -172,10 +172,11 @@ public class DiskThresholdMonitor extends AbstractComponent {
                         }
                     }
                 }
-                if(usage.getFreeBytes() > diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes()){
-                    if(readOnlyNodes.contains(nodeName)) {
+                long floodStageThresholdbytes = diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes();
+                if (floodStageThresholdbytes > 0 && usage.getFreeBytes() > floodStageThresholdbytes) {
+                    if (readOnlyNodes.contains(nodeName)) {
                         readOnlyNodes.remove(nodeName);
-                        logger.info("Removing {} from readOnlyNodes list, since the node's free space is above flood stage threshold",nodeName);
+                        logger.info("Removing {} from readOnlyNodes list, since the node's free space is {} above flood stage threshold", nodeName, floodStageThresholdbytes);
                         readOnlyNodesUpdated = true;
                     }
                 }
