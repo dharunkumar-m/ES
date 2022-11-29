@@ -55,16 +55,14 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Client client;
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
-    private final ClusterService clusterService;
     private long lastRunNS;
 
     public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
-                                Client client, ClusterService clusterService) {
+                                Client client) {
         super(settings);
         this.clusterStateSupplier = clusterStateSupplier;
         this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
         this.client = client;
-        this.clusterService = clusterService;
     }
 
     /**
@@ -113,9 +111,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
             }
             ClusterState state = clusterStateSupplier.get();
             RoutingNodes routingNodes = state.getRoutingNodes();
-            Set<String> readOnlyNodes = new HashSet<>();
-            readOnlyNodes.addAll(state.readOnlyNodes());
-            boolean readOnlyNodesUpdated = false;
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
             markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
@@ -127,11 +122,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
-                    if(!readOnlyNodes.contains(nodeName)) {
-                        readOnlyNodes.add(nodeName);
-                        logger.info("Adding {} to readOnlyNodes list, since the node's free space is below flood stage threshold",nodeName);
-                        readOnlyNodesUpdated = true;
-                    }
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -172,14 +162,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
                         }
                     }
                 }
-                long floodStageThresholdbytes = diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes();
-                if (floodStageThresholdbytes > 0 && usage.getFreeBytes() > floodStageThresholdbytes) {
-                    if (readOnlyNodes.contains(nodeName)) {
-                        readOnlyNodes.remove(nodeName);
-                        logger.info("Removing {} from readOnlyNodes list, since the node's free space is {} above flood stage threshold", nodeName, floodStageThresholdbytes);
-                        readOnlyNodesUpdated = true;
-                    }
-                }
             }
             if (reroute) {
                 logger.info("rerouting shards: [{}]", explanation);
@@ -201,9 +183,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
             indicesToMarkReadOnly.removeIf(index -> state.getBlocks().indexBlocked(ClusterBlockLevel.WRITE, index));
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
-            }
-            if(readOnlyNodesUpdated) {
-                updateReadOnlyNodes(readOnlyNodes);
             }
         }
     }
@@ -244,24 +223,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
                     logger.info(new ParameterizedMessage("setting indices [{}] read-only failed", readOnly), e);
                 }
             });
-    }
-
-    protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
-        logger.info("submit task to update Read Only Nodes list " + readOnlyNodes);
-
-            clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
-            @Override
-            public ClusterState execute(ClusterState currentState) throws Exception {
-                List<String> temp = new ArrayList<>();
-                temp.addAll(readOnlyNodes);
-                return ClusterState.builder(currentState).readOnlyNodes(temp).build();
-            }
-
-            @Override
-            public void onFailure(String source, Exception e) {
-                throw new AssertionError(e);
-            }
-        });
     }
 
 }

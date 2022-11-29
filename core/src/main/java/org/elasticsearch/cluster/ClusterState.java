@@ -43,7 +43,11 @@ import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.compress.CompressedXContent;
-import org.elasticsearch.common.io.stream.*;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.NamedWriteableAwareStreamInput;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -52,7 +56,11 @@ import org.elasticsearch.discovery.Discovery;
 import org.elasticsearch.discovery.zen.PublishClusterStateAction;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Represents the current state of the cluster.
@@ -110,15 +118,14 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
 
     // built on demand
     private volatile RoutingNodes routingNodes;
-    private List<String> readOnlyNodes;
 
     public ClusterState(long version, String stateUUID, ClusterState state) {
         this(state.clusterName, version, stateUUID, state.metaData(), state.routingTable(), state.nodes(), state.blocks(), state.customs(),
-            false, state.readOnlyNodes);
+            false);
     }
 
     public ClusterState(ClusterName clusterName, long version, String stateUUID, MetaData metaData, RoutingTable routingTable,
-                        DiscoveryNodes nodes, ClusterBlocks blocks, ImmutableOpenMap<String, Custom> customs, boolean wasReadFromDiff, List<String> readOnlyNodes) {
+                        DiscoveryNodes nodes, ClusterBlocks blocks, ImmutableOpenMap<String, Custom> customs, boolean wasReadFromDiff) {
         this.version = version;
         this.stateUUID = stateUUID;
         this.clusterName = clusterName;
@@ -128,7 +135,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         this.blocks = blocks;
         this.customs = customs;
         this.wasReadFromDiff = wasReadFromDiff;
-        this.readOnlyNodes = readOnlyNodes;
     }
 
     public long version() {
@@ -195,10 +201,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         return this.clusterName;
     }
 
-    public List<String> readOnlyNodes() {
-        return this.readOnlyNodes;
-    }
-
     // Used for testing and logging to determine how this cluster state was send over the wire
     public boolean wasReadFromDiff() {
         return wasReadFromDiff;
@@ -220,7 +222,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         StringBuilder sb = new StringBuilder();
         sb.append("cluster uuid: ").append(metaData.clusterUUID()).append("\n");
         sb.append("version: ").append(version).append("\n");
-        sb.append("readOnlyNodes: ").append(readOnlyNodes).append("\n");
         sb.append("state uuid: ").append(stateUUID).append("\n");
         sb.append("from_diff: ").append(wasReadFromDiff).append("\n");
         sb.append("meta data version: ").append(metaData.version()).append("\n");
@@ -269,8 +270,7 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         METADATA("metadata"),
         ROUTING_TABLE("routing_table"),
         ROUTING_NODES("routing_nodes"),
-        CUSTOMS("customs"),
-        READ_ONLY_NODES("read_only_nodes");
+        CUSTOMS("customs");
 
         private static Map<String, Metric> valueToEnum;
 
@@ -324,10 +324,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
 
         if (metrics.contains(Metric.MASTER_NODE)) {
             builder.field("master_node", nodes().getMasterNodeId());
-        }
-
-        if (metrics.contains(Metric.READ_ONLY_NODES)) {
-            builder.field("read_only_nodes", readOnlyNodes);
         }
 
         if (metrics.contains(Metric.BLOCKS)) {
@@ -526,7 +522,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         private long version = 0;
         private String uuid = UNKNOWN_UUID;
         private MetaData metaData = MetaData.EMPTY_META_DATA;
-        private List<String> readOnlyNodes = new ArrayList<>();
         private RoutingTable routingTable = RoutingTable.EMPTY_ROUTING_TABLE;
         private DiscoveryNodes nodes = DiscoveryNodes.EMPTY_NODES;
         private ClusterBlocks blocks = ClusterBlocks.EMPTY_CLUSTER_BLOCK;
@@ -539,7 +534,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             this.version = state.version();
             this.uuid = state.stateUUID();
             this.nodes = state.nodes();
-            this.readOnlyNodes = state.readOnlyNodes();
             this.routingTable = state.routingTable();
             this.metaData = state.metaData();
             this.blocks = state.blocks();
@@ -593,11 +587,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             return this;
         }
 
-        public Builder readOnlyNodes(List<String> readOnlyNodes) {
-            this.readOnlyNodes = readOnlyNodes;
-            return this;
-        }
-
         public Builder incrementVersion() {
             this.version = version + 1;
             this.uuid = UNKNOWN_UUID;
@@ -633,7 +622,7 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             if (UNKNOWN_UUID.equals(uuid)) {
                 uuid = UUIDs.randomBase64UUID();
             }
-            return new ClusterState(clusterName, version, uuid, metaData, routingTable, nodes, blocks, customs.build(), fromDiff, readOnlyNodes);
+            return new ClusterState(clusterName, version, uuid, metaData, routingTable, nodes, blocks, customs.build(), fromDiff);
         }
 
         public static byte[] toBytes(ClusterState state) throws IOException {
@@ -671,7 +660,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         builder.routingTable = RoutingTable.readFrom(in);
         builder.nodes = DiscoveryNodes.readFrom(in, localNode);
         builder.blocks = new ClusterBlocks(in);
-        builder.readOnlyNodes = in.readList(StreamInput::readString);
         int customSize = in.readVInt();
         for (int i = 0; i < customSize; i++) {
             Custom customIndexMetaData = in.readNamedWriteable(Custom.class);
@@ -689,7 +677,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
         routingTable.writeTo(out);
         nodes.writeTo(out);
         blocks.writeTo(out);
-        out.writeStringList(readOnlyNodes);
         // filter out custom states not supported by the other node
         int numberOfCustoms = 0;
         for (ObjectCursor<Custom> cursor : customs.values()) {
@@ -725,8 +712,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
 
         private final Diff<ImmutableOpenMap<String, Custom>> customs;
 
-        private final List<String> readOnlyNodes;
-
         ClusterStateDiff(ClusterState before, ClusterState after) {
             fromUuid = before.stateUUID;
             toUuid = after.stateUUID;
@@ -737,7 +722,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             metaData = after.metaData.diff(before.metaData);
             blocks = after.blocks.diff(before.blocks);
             customs = DiffableUtils.diff(before.customs, after.customs, DiffableUtils.getStringKeySerializer(), CUSTOM_VALUE_SERIALIZER);
-            readOnlyNodes = after.readOnlyNodes;
         }
 
         ClusterStateDiff(StreamInput in, DiscoveryNode localNode) throws IOException {
@@ -750,8 +734,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             metaData = MetaData.readDiffFrom(in);
             blocks = ClusterBlocks.readDiffFrom(in);
             customs = DiffableUtils.readImmutableOpenMapDiff(in, DiffableUtils.getStringKeySerializer(), CUSTOM_VALUE_SERIALIZER);
-            readOnlyNodes = in.readList(StreamInput::readString);
-
         }
 
         @Override
@@ -765,7 +747,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             metaData.writeTo(out);
             blocks.writeTo(out);
             customs.writeTo(out);
-            out.writeStringList(readOnlyNodes);
         }
 
         @Override
@@ -786,7 +767,6 @@ public class ClusterState implements ToXContent, Diffable<ClusterState> {
             builder.blocks(blocks.apply(state.blocks));
             builder.customs(customs.apply(state.customs));
             builder.fromDiff(true);
-            builder.readOnlyNodes(readOnlyNodes);
             return builder.build();
         }
 
