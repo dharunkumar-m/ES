@@ -24,15 +24,11 @@ import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
-import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.LocalTransportAddress;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -70,12 +66,8 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         AtomicReference<Set<String>> indicesToRelease = new AtomicReference<>();
         AtomicReference<Set<String>> nodesReadOnly = new AtomicReference<>();
 
-        ClusterService clusterService = new ClusterService(Settings.EMPTY,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, () ->
-            new DiscoveryNode(UUIDs.randomBase64UUID(), LocalTransportAddress.buildUnique(), Version.CURRENT));
-
         DiskThresholdMonitor monitor = new DiskThresholdMonitor(Settings.EMPTY, () -> finalState,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, clusterService) {
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null) {
             @Override
             protected void reroute() {
             }
@@ -88,11 +80,6 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
                     assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
                 }
             }
-
-            @Override
-            protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
-                assertTrue(nodesReadOnly.compareAndSet(null, readOnlyNodes));
-            }
         };
 
         //One Node Disk is below flood stage watermark
@@ -102,7 +89,6 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
         assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToMarkReadOnly.get());
         assertNull(indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node1")), nodesReadOnly.get());
 
         indicesToMarkReadOnly.set(null);
         indicesToRelease.set(null);
@@ -115,7 +101,6 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         monitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
         assertEquals(new HashSet<>(Arrays.asList("test_1", "test_2")), indicesToMarkReadOnly.get());
         assertNull(indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node1", "node2")), nodesReadOnly.get());
 
         indicesToMarkReadOnly.set(null);
         indicesToRelease.set(null);
@@ -132,7 +117,7 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         assertTrue(clusterStateWithBlocks.blocks().indexBlocked(ClusterBlockLevel.WRITE, "test_1"));
 
         DiskThresholdMonitor newMonitor = new DiskThresholdMonitor(Settings.EMPTY, () -> clusterStateWithBlocks,
-            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null, clusterService) {
+            new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null) {
             @Override
             protected void reroute() {
             }
@@ -145,11 +130,6 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
                     assertTrue(indicesToRelease.compareAndSet(null, indicesToUpdate));
                 }
             }
-
-            @Override
-            protected void updateReadOnlyNodes(Set<String> readOnlyNodes) {
-                assertTrue(nodesReadOnly.compareAndSet(null, readOnlyNodes));
-            }
         };
 
         //Setting one node disk space beyond flood stage, in which the indices were read-only
@@ -159,6 +139,5 @@ public class DiskThresholdMonitorTests extends ESAllocationTestCase {
         newMonitor.onNewInfo(new ClusterInfo(builder.build(), null, null, null));
         assertEquals(new HashSet<>(Arrays.asList("test_2")), indicesToMarkReadOnly.get());
         assertEquals(new HashSet<>(Arrays.asList("test_1")), indicesToRelease.get());
-        assertEquals(new HashSet<>(Arrays.asList("node2")), nodesReadOnly.get());
     }
 }
