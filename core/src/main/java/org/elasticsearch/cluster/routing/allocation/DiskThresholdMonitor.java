@@ -33,6 +33,7 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -41,7 +42,6 @@ import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.set.Sets;
 
@@ -56,13 +56,15 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
     private long lastRunNS;
+    private final ClusterService clusterService;
 
-    public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
+    public DiskThresholdMonitor(Settings settings, ClusterService clusterService,
                                 Client client) {
         super(settings);
-        this.clusterStateSupplier = clusterStateSupplier;
-        this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
+        this.clusterStateSupplier = clusterService::state;
+        this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterService.getClusterSettings());
         this.client = client;
+        this.clusterService = clusterService;
     }
 
     /**
@@ -82,7 +84,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
         }
 
         // Check percentage disk values
-        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
+        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
             logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
                 Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdFloodStage(), "%"), usage);
         } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
@@ -113,15 +115,16 @@ public class DiskThresholdMonitor extends AbstractComponent {
             RoutingNodes routingNodes = state.getRoutingNodes();
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
+            Set<String> readOnlyNodes = new HashSet<>();
             markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
-                String nodeName = usage.getNodeName();
                 warnAboutDiskIfNeeded(usage);
                 RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+                    readOnlyNodes.add(usage.getNodeName());
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -184,6 +187,13 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
+
+            DiscoveryNodes discoveryNodes = state.nodes();
+            Map<String, String> attributes = new HashMap<>();
+            attributes.putAll(discoveryNodes.getMasterNode().getAttributes());
+            attributes.put("readOnlyNodes", readOnlyNodes.toString());
+            discoveryNodes.getMasterNode().setAttributes(attributes);
+            updateReadOnlyNodes(discoveryNodes);
         }
     }
 
@@ -225,4 +235,17 @@ public class DiskThresholdMonitor extends AbstractComponent {
             });
     }
 
+    private void updateReadOnlyNodes(DiscoveryNodes discoveryNodes) {
+        clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
+            @Override
+            public ClusterState execute(ClusterState currentState) throws Exception {
+                return ClusterState.builder(currentState).nodes(discoveryNodes).build();
+            }
+
+            @Override
+            public void onFailure(String source, Exception e) {
+                throw new AssertionError(e);
+            }
+        });
+    }
 }
