@@ -187,13 +187,7 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
-
-            DiscoveryNodes discoveryNodes = state.nodes();
-            Map<String, String> attributes = new HashMap<>();
-            attributes.putAll(discoveryNodes.getMasterNode().getAttributes());
-            attributes.put("readOnlyNodes", readOnlyNodes.toString());
-            discoveryNodes.getMasterNode().setAttributes(attributes);
-            updateReadOnlyNodes(discoveryNodes);
+            updateReadOnlyNodes(readOnlyNodes.toString());
         }
     }
 
@@ -235,10 +229,15 @@ public class DiskThresholdMonitor extends AbstractComponent {
             });
     }
 
-    private void updateReadOnlyNodes(DiscoveryNodes discoveryNodes) {
+    private void updateReadOnlyNodes(String readOnlyNodes) {
         clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
             @Override
             public ClusterState execute(ClusterState currentState) throws Exception {
+                DiscoveryNodes discoveryNodes = currentState.nodes();
+                Map<String, String> attributes = new HashMap<>();
+                attributes.putAll(discoveryNodes.getMasterNode().getAttributes());
+                attributes.put("readOnlyNodes", readOnlyNodes);
+                discoveryNodes.getMasterNode().setAttributes(attributes);
                 return ClusterState.builder(currentState).nodes(discoveryNodes).build();
             }
 
