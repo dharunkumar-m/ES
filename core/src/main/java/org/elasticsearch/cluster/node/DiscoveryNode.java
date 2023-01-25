@@ -76,7 +76,7 @@ public class DiscoveryNode implements Writeable, ToXContent {
     private final String hostName;
     private final String hostAddress;
     private final TransportAddress address;
-    private Map<String, String> attributes;
+    private final Map<String, String> attributes;
     private final Version version;
     private final Set<Role> roles;
 
@@ -300,10 +300,6 @@ public class DiscoveryNode implements Writeable, ToXContent {
      */
     public Map<String, String> getAttributes() {
         return this.attributes;
-    }
-
-    public void setAttributes(Map<String, String> attribute){
-        this.attributes = attribute;
     }
 
     /**

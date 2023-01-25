@@ -355,7 +355,8 @@ public class Node implements Closeable {
             resourcesToClose.add(clusterService);
             final IngestService ingestService = new IngestService(clusterService.getClusterSettings(), settings, threadPool, this.environment,
                 scriptModule.getScriptService(), analysisModule.getAnalysisRegistry(), pluginsService.filterPlugins(IngestPlugin.class));
-            final DiskThresholdMonitor listener = new DiskThresholdMonitor(settings, clusterService, client);
+            final DiskThresholdMonitor listener = new DiskThresholdMonitor(settings, clusterService::state,
+                clusterService.getClusterSettings(), client);
             final ClusterInfoService clusterInfoService = newClusterInfoService(settings, clusterService, threadPool, client,
                 listener::onNewInfo);
 

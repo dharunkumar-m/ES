@@ -33,7 +33,6 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -42,6 +41,7 @@ import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.AbstractComponent;
+import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.set.Sets;
 
@@ -56,15 +56,13 @@ public class DiskThresholdMonitor extends AbstractComponent {
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
     private final Supplier<ClusterState> clusterStateSupplier;
     private long lastRunNS;
-    private final ClusterService clusterService;
 
-    public DiskThresholdMonitor(Settings settings, ClusterService clusterService,
+    public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
                                 Client client) {
         super(settings);
-        this.clusterStateSupplier = clusterService::state;
-        this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterService.getClusterSettings());
+        this.clusterStateSupplier = clusterStateSupplier;
+        this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
         this.client = client;
-        this.clusterService = clusterService;
     }
 
     /**
@@ -115,7 +113,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
             RoutingNodes routingNodes = state.getRoutingNodes();
             Set<String> indicesToMarkReadOnly = new HashSet<>();
             Set<String> indicesNotToAutoRelease = new HashSet<>();
-            Set<String> readOnlyNodes = new HashSet<>();
             markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
@@ -124,7 +121,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
                 RoutingNode routingNode = routingNodes.node(node);
                 if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
-                    readOnlyNodes.add(usage.getNodeName());
                     if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
                         for (ShardRouting routing : routingNode) {
                             String indexName = routing.index().getName();
@@ -187,7 +183,6 @@ public class DiskThresholdMonitor extends AbstractComponent {
             if (!indicesToMarkReadOnly.isEmpty()) {
                 updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
-            updateReadOnlyNodes(readOnlyNodes.toString());
         }
     }
 
@@ -227,24 +222,5 @@ public class DiskThresholdMonitor extends AbstractComponent {
                     logger.info(new ParameterizedMessage("setting indices [{}] read-only failed", readOnly), e);
                 }
             });
-    }
-
-    private void updateReadOnlyNodes(String readOnlyNodes) {
-        clusterService.submitStateUpdateTask("Update_Read_Only_Nodes", new ClusterStateUpdateTask(Priority.IMMEDIATE) {
-            @Override
-            public ClusterState execute(ClusterState currentState) throws Exception {
-                DiscoveryNodes discoveryNodes = currentState.nodes();
-                Map<String, String> attributes = new HashMap<>();
-                attributes.putAll(discoveryNodes.getMasterNode().getAttributes());
-                attributes.put("readOnlyNodes", readOnlyNodes);
-                discoveryNodes.getMasterNode().setAttributes(attributes);
-                return ClusterState.builder(currentState).nodes(discoveryNodes).build();
-            }
-
-            @Override
-            public void onFailure(String source, Exception e) {
-                throw new AssertionError(e);
-            }
-        });
     }
 }
