@@ -20,17 +20,28 @@
 package org.elasticsearch.cluster.routing.allocation;
 
 import java.util.Set;
+import java.util.HashSet;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import com.carrotsearch.hppc.ObjectLookupContainer;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterInfo;
-import org.elasticsearch.cluster.ClusterInfoService;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.DiskUsage;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.RoutingNodes;
+import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.set.Sets;
@@ -40,21 +51,19 @@ import org.elasticsearch.common.util.set.Sets;
  * reroute if it does. Also responsible for logging about nodes that have
  * passed the disk watermarks
  */
-public class DiskThresholdMonitor extends AbstractComponent implements ClusterInfoService.Listener {
+public class DiskThresholdMonitor extends AbstractComponent {
     private final DiskThresholdSettings diskThresholdSettings;
     private final Client client;
     private final Set<String> nodeHasPassedWatermark = Sets.newConcurrentHashSet();
-
+    private final Supplier<ClusterState> clusterStateSupplier;
     private long lastRunNS;
 
-    // TODO: remove injection when ClusterInfoService is not injected
-    @Inject
-    public DiskThresholdMonitor(Settings settings, ClusterSettings clusterSettings,
-                                ClusterInfoService infoService, Client client) {
+    public DiskThresholdMonitor(Settings settings, Supplier<ClusterState> clusterStateSupplier, ClusterSettings clusterSettings,
+                                Client client) {
         super(settings);
+        this.clusterStateSupplier = clusterStateSupplier;
         this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterSettings);
         this.client = client;
-        infoService.addListener(this);
     }
 
     /**
@@ -62,7 +71,10 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
      */
     private void warnAboutDiskIfNeeded(DiskUsage usage) {
         // Check absolute disk values
-        if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes()) {
+        if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes()) {
+            logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
+                diskThresholdSettings.getFreeBytesThresholdFloodStage(), usage);
+        } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes()) {
             logger.warn("high disk watermark [{}] exceeded on {}, shards will be relocated away from this node",
                 diskThresholdSettings.getFreeBytesThresholdHigh(), usage);
         } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdLow().getBytes()) {
@@ -71,7 +83,10 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
 
         // Check percentage disk values
-        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
+        if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+            logger.warn("floodstage disk watermark [{}] exceeded on {}, all indices on this node will marked read-only",
+                Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdFloodStage(), "%"), usage);
+        } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
             logger.warn("high disk watermark [{}] exceeded on {}, shards will be relocated away from this node",
                 Strings.format1Decimals(100.0 - diskThresholdSettings.getFreeDiskThresholdHigh(), "%"), usage);
         } else if (usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdLow()) {
@@ -80,7 +95,7 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
         }
     }
 
-    @Override
+
     public void onNewInfo(ClusterInfo info) {
         ImmutableOpenMap<String, DiskUsage> usages = info.getNodeLeastAvailableDiskUsages();
         if (usages != null) {
@@ -95,12 +110,26 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
                     nodeHasPassedWatermark.remove(node);
                 }
             }
-
+            ClusterState state = clusterStateSupplier.get();
+            RoutingNodes routingNodes = state.getRoutingNodes();
+            Set<String> indicesToMarkReadOnly = new HashSet<>();
+            Set<String> indicesNotToAutoRelease = new HashSet<>();
+            markNodesMissingUsageIneligibleForRelease(routingNodes, usages, indicesNotToAutoRelease);
             for (ObjectObjectCursor<String, DiskUsage> entry : usages) {
                 String node = entry.key;
                 DiskUsage usage = entry.value;
                 warnAboutDiskIfNeeded(usage);
-                if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes() ||
+                RoutingNode routingNode = routingNodes.node(node);
+                if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdFloodStage().getBytes() ||
+                    usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdFloodStage()) {
+                    if (routingNode != null) { // this might happen if we haven't got the full cluster-state yet?!
+                        for (ShardRouting routing : routingNode) {
+                            String indexName = routing.index().getName();
+                            indicesToMarkReadOnly.add(indexName);
+                            indicesNotToAutoRelease.add(indexName);
+                        }
+                    }
+                } else if (usage.getFreeBytes() < diskThresholdSettings.getFreeBytesThresholdHigh().getBytes() ||
                     usage.getFreeDiskAsPercentage() < diskThresholdSettings.getFreeDiskThresholdHigh()) {
                     if ((System.nanoTime() - lastRunNS) > diskThresholdSettings.getRerouteInterval().nanos()) {
                         lastRunNS = System.nanoTime();
@@ -136,9 +165,63 @@ public class DiskThresholdMonitor extends AbstractComponent implements ClusterIn
             }
             if (reroute) {
                 logger.info("rerouting shards: [{}]", explanation);
-                // Execute an empty reroute, but don't block on the response
-                client.admin().cluster().prepareReroute().execute();
+                reroute();
+            }
+
+            Set<String> indicesToAutoRelease = StreamSupport.stream(state.routingTable().indicesRouting()
+                    .spliterator(), false)
+                .map(c -> c.key)
+                .filter(index -> indicesNotToAutoRelease.contains(index) == false)
+                .filter(index -> state.getBlocks().hasIndexBlock(index, IndexMetaData.INDEX_READ_ONLY_ALLOW_DELETE_BLOCK))
+                .collect(Collectors.toSet());
+
+            if (!indicesToAutoRelease.isEmpty()) {
+                logger.info("releasing read-only-allow-delete block on indices: [{}]", indicesToAutoRelease);
+                updateIndicesReadOnly(indicesToAutoRelease, false);
+            }
+
+            indicesToMarkReadOnly.removeIf(index -> state.getBlocks().indexBlocked(ClusterBlockLevel.WRITE, index));
+            if (!indicesToMarkReadOnly.isEmpty()) {
+                updateIndicesReadOnly(indicesToMarkReadOnly,true);
             }
         }
+    }
+
+    protected void reroute() {
+        // Execute an empty reroute, but don't block on the response
+        client.admin().cluster().prepareReroute().execute();
+    }
+
+    private void markNodesMissingUsageIneligibleForRelease(RoutingNodes routingNodes, ImmutableOpenMap<String, DiskUsage> usages,
+                                                           Set<String> indicesToMarkIneligibleForAutoRelease) {
+        for (RoutingNode routingNode : routingNodes) {
+            if (usages.containsKey(routingNode.nodeId()) == false) {
+                if (routingNode != null) {
+                    for (ShardRouting routing : routingNode) {
+                        String indexName = routing.index().getName();
+                        indicesToMarkIneligibleForAutoRelease.add(indexName);
+                    }
+                }
+            }
+        }
+
+    }
+
+    protected void updateIndicesReadOnly(Set<String> indicesToUpdate, boolean readOnly) {
+        // set read-only block but don't block on the response
+        Settings readOnlySettings = readOnly ? Settings.builder().put(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE, Boolean.TRUE.toString()).build() :
+                                    Settings.builder().putNull(IndexMetaData.SETTING_READ_ONLY_ALLOW_DELETE).build();
+        client.admin().indices().prepareUpdateSettings(indicesToUpdate.toArray(Strings.EMPTY_ARRAY)).setSettings(readOnlySettings)
+            .execute(new ActionListener<UpdateSettingsResponse>() {
+                @Override
+                public void onResponse(UpdateSettingsResponse r) {
+                    logger.info("setting indices [{}] read-only succeed [{}]", readOnly, r);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    logger.info(new ParameterizedMessage("setting indices [{}] read-only failed", readOnly), e);
+                }
+            });
     }
 }
